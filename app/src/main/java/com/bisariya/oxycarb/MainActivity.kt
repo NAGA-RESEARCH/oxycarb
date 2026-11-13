@@ -1257,7 +1257,7 @@ private fun MusicHome(player: MediaController?, viewModel: MainViewModel) {
                                                 modifier = Modifier.fillMaxWidth().glass().padding(16.dp),
                                                 horizontalAlignment = Alignment.CenterHorizontally
                                             ) {
-                                                Text("OXYCARB v1.0.0 (Universal)", color = theme.textPrimary, fontWeight = FontWeight.Bold, fontSize = 14.sp)
+                                                Text("OXYCARB v1.1.9 (Universal)", color = theme.textPrimary, fontWeight = FontWeight.Bold, fontSize = 14.sp)
                                                 Spacer(Modifier.height(4.dp))
                                                 Text("Crafted with ❤️ by AK Bisariya", color = theme.secondary, fontSize = 12.sp)
                                                 Text("Engine: Media3 ExoPlayer & NewPipeExtractor", color = theme.secondary.copy(alpha = 0.7f), fontSize = 10.sp)
