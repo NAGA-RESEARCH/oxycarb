@@ -1,2 +1,8 @@
-*.html linguist-vendored
-*.bin linguist-vendored
+# GitHub Linguist Language Configuration
+*.kt linguist-language=Kotlin
+*.kts linguist-language=Kotlin
+*.xml linguist-vendored
+*.md linguist-vendored
+*.properties linguist-vendored
+*.bat linguist-vendored
+gradlew linguist-vendored
