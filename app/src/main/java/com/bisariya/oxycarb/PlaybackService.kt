@@ -1,6 +1,7 @@
 package com.bisariya.oxycarb
 
 import android.content.Intent
+import android.util.Log
 import androidx.media3.common.AudioAttributes
 import androidx.media3.common.C
 import androidx.media3.common.ForwardingPlayer
@@ -43,13 +44,19 @@ class PlaybackService : MediaSessionService() {
         val mediaSourceFactory = DefaultMediaSourceFactory(this)
             .setDataSourceFactory(dataSourceFactory)
 
-        player = ExoPlayer.Builder(this)
+        val playerBuilder = ExoPlayer.Builder(this)
             .setMediaSourceFactory(mediaSourceFactory)
             .setAudioAttributes(audioAttributes, true)
             .setHandleAudioBecomingNoisy(true)
             .setLoadControl(loadControl)
-            .setWakeMode(C.WAKE_MODE_NETWORK)
-            .build()
+
+        try {
+            playerBuilder.setWakeMode(C.WAKE_MODE_NETWORK)
+        } catch (e: Exception) {
+            Log.e("PlaybackService", "Failed to set wake mode", e)
+        }
+
+        player = playerBuilder.build()
 
         val forwardingPlayer = object : ForwardingPlayer(player) {
             override fun getAvailableCommands(): Player.Commands {
