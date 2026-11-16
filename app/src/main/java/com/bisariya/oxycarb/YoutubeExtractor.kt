@@ -44,17 +44,27 @@ object YoutubeExtractor {
 
             val audioStreams = extractor.audioStreams
             if (!audioStreams.isNullOrEmpty()) {
-                val selected = when (quality) {
-                    "Data Saver (48kbps)" -> audioStreams.minByOrNull { it.averageBitrate }
-                    "High Quality (128kbps+)" -> audioStreams.maxByOrNull { it.averageBitrate }
-                    else -> {
-                        // Balanced (96kbps) or default
-                        audioStreams.minByOrNull { kotlin.math.abs(it.averageBitrate - 96) }
-                            ?: audioStreams.maxByOrNull { it.averageBitrate }
+                val prioritized = audioStreams.sortedWith(
+                    compareByDescending<org.schabi.newpipe.extractor.stream.AudioStream> {
+                        val formatName = it.format?.name?.lowercase() ?: ""
+                        val isItag140 = it.itag == 140
+                        when {
+                            isItag140 -> 4
+                            formatName.contains("m4a") || formatName.contains("mp4a") -> 3
+                            formatName.contains("aac") -> 2
+                            formatName.contains("opus") || formatName.contains("webm") -> 1
+                            else -> 0
+                        }
+                    }.thenByDescending {
+                        when (quality) {
+                            "Data Saver (48kbps)" -> -it.averageBitrate
+                            "High Quality (128kbps+)" -> it.averageBitrate
+                            else -> -kotlin.math.abs(it.averageBitrate - 96)
+                        }
                     }
-                }
+                )
 
-                val selectedUrl = selected?.content ?: audioStreams.firstOrNull()?.content
+                val selectedUrl = prioritized.firstOrNull()?.content ?: audioStreams.firstOrNull()?.content
                 if (selectedUrl != null) {
                     streamUrlCache[cacheKey] = CachedStream(selectedUrl, System.currentTimeMillis())
                 }

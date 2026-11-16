@@ -501,27 +501,33 @@ private fun MusicHome(player: MediaController?, viewModel: MainViewModel) {
     }
 
     fun startTrack(track: TrackInfo, mode: PlaybackMode = PlaybackMode.RADIO_AUTOPLAY, queue: List<TrackInfo> = emptyList(), isUserClick: Boolean = true, pushToStack: Boolean = true) {
+        // Synchronous Main Thread Cleanup FIRST before launching coroutine (Zero Audio Overlap)
+        player?.pause()
+        player?.stop()
+        player?.clearMediaItems()
+
         playbackJob?.cancel()
+
+        if (pushToStack && current != null && current?.id != track.id) {
+            playedHistoryStack.add(current!!)
+        }
+
+        if (isUserClick) {
+            viewModel.playbackMode.value = mode
+            if (mode == PlaybackMode.PLAYLIST_LOOP) {
+                viewModel.playlistQueue.value = queue
+            }
+        }
+
+        current = track
+        playing = false
+        currentPositionMs = 0L
+        playbackError = null
+        streamLoading = true
+
+        viewModel.addToHistory(track)
+
         playbackJob = coroutineScope.launch(Dispatchers.Main) {
-            if (pushToStack && current != null && current?.id != track.id) {
-                playedHistoryStack.add(current!!)
-            }
-
-            if (isUserClick) {
-                viewModel.playbackMode.value = mode
-                if (mode == PlaybackMode.PLAYLIST_LOOP) {
-                    viewModel.playlistQueue.value = queue
-                }
-            }
-
-            current = track
-            playing = false
-            currentPositionMs = 0L
-            playbackError = null
-            streamLoading = true
-
-            viewModel.addToHistory(track)
-
             val localUri = DownloadHelper.getLocalUri(context, track.id)
             val streamUrl = localUri ?: YoutubeExtractor.getAudioUrl(track.id, selectedAudioQuality)
             if (!isActive) return@launch
@@ -693,8 +699,9 @@ private fun MusicHome(player: MediaController?, viewModel: MainViewModel) {
                 currentPositionMs = pos
                 durationMs = dur
 
+                // Fast pre-fetch next track stream URL at 50% progress for instant transition (< 400ms)
                 val progressFraction = pos.toFloat() / dur.toFloat()
-                if (progressFraction >= 0.70f) {
+                if (progressFraction >= 0.50f) {
                     val nextTrack = if (viewModel.playbackMode.value == PlaybackMode.PLAYLIST_LOOP) {
                         val queue = viewModel.playlistQueue.value
                         val currentIndex = queue.indexOfFirst { it.id == current?.id }
