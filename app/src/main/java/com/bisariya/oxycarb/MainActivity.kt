@@ -282,51 +282,41 @@ fun FullScreenBackgroundVisualizer(
     modifier: Modifier = Modifier
 ) {
     val theme = LocalAppTheme.current
-    val transition = rememberInfiniteTransition(label = "BackgroundVisualizerAnim")
+    val infiniteTransition = rememberInfiniteTransition(label = "BackgroundVisualizerAnim")
+    val pulse by infiniteTransition.animateFloat(
+        initialValue = 0.3f,
+        targetValue = 0.9f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(durationMillis = 1000, easing = FastOutSlowInEasing),
+            repeatMode = RepeatMode.Reverse
+        ),
+        label = "Pulse"
+    )
+
+    val currentPulse = if (isPlaying) pulse else 0.2f
 
     Row(
         modifier = modifier,
-        horizontalArrangement = Arrangement.spacedBy(2.dp),
+        horizontalArrangement = Arrangement.spacedBy(4.dp),
         verticalAlignment = Alignment.Bottom
     ) {
-        val barCount = 44
         val baseHeights = remember {
-            List(barCount) { i ->
-                val wave = sin(i * 0.35 + (i % 5)).toFloat()
-                (0.25f + kotlin.math.abs(wave) * 0.75f).coerceIn(0.25f, 1.0f)
-            }
+            listOf(0.4f, 0.7f, 0.5f, 0.9f, 0.6f, 0.8f, 0.4f, 1.0f, 0.7f, 0.5f, 0.8f, 0.6f, 0.9f, 0.4f, 0.7f, 0.5f)
         }
 
         baseHeights.forEachIndexed { index, baseHeight ->
-            val animHeight by transition.animateFloat(
-                initialValue = 0.15f,
-                targetValue = baseHeight,
-                animationSpec = infiniteRepeatable(
-                    animation = tween(
-                        durationMillis = 420 + (index * 53) % 450,
-                        easing = FastOutSlowInEasing
-                    ),
-                    repeatMode = RepeatMode.Reverse
-                ),
-                label = "BarAnim$index"
-            )
-
-            val smoothHeight by animateFloatAsState(
-                targetValue = if (isPlaying) animHeight else 0.12f,
-                animationSpec = tween(durationMillis = 350, easing = LinearEasing),
-                label = "SmoothH$index"
-            )
+            val heightFactor = (baseHeight * currentPulse).coerceIn(0.15f, 1.0f)
 
             Box(
                 modifier = Modifier
                     .weight(1f)
-                    .height((260 * smoothHeight).dp)
+                    .height((180 * heightFactor).dp)
                     .clip(RoundedCornerShape(topStart = 3.dp, topEnd = 3.dp))
                     .background(
                         Brush.verticalGradient(
                             colors = listOf(
-                                theme.accent.copy(alpha = 0.6f),
-                                theme.secondary.copy(alpha = 0.25f),
+                                theme.accent.copy(alpha = 0.5f),
+                                theme.secondary.copy(alpha = 0.2f),
                                 Color.Transparent
                             )
                         )
@@ -652,6 +642,7 @@ private fun MusicHome(player: MediaController?, viewModel: MainViewModel) {
     var playbackSpeed by remember { mutableFloatStateOf(1f) }
     var dataSaver by remember { mutableStateOf(prefs.getBoolean("data_saver", false)) }
     var selectedAudioQuality by remember { mutableStateOf(prefs.getString("audio_quality", "Balanced (96kbps)") ?: "Balanced (96kbps)") }
+    var selectedDownloadQuality by remember { mutableStateOf(prefs.getString("download_quality", "High Quality (128kbps+)") ?: "High Quality (128kbps+)") }
     var autoPlayEnabled by remember { mutableStateOf(prefs.getBoolean("auto_play", true)) }
     var backupEnabled by remember { mutableStateOf(prefs.getBoolean("backup_enabled", false)) }
     var selectedEqPreset by remember { mutableStateOf(prefs.getString("eq_preset", "Normal") ?: "Normal") }
@@ -1247,7 +1238,7 @@ private fun MusicHome(player: MediaController?, viewModel: MainViewModel) {
                                                 onAddToPlaylist = { trackToAddToPlaylist = song },
                                                 onDownload = {
                                                     coroutineScope.launch {
-                                                        DownloadHelper.downloadTrack(context, song, selectedAudioQuality, {}, { success ->
+                                                        DownloadHelper.downloadTrack(context, song, selectedDownloadQuality, {}, { success ->
                                                             if (success) {
                                                                 downloadedTracks = DownloadHelper.getDownloadedTracks(context)
                                                                 Toast.makeText(context, "Downloaded ${song.title}", Toast.LENGTH_SHORT).show()
@@ -1490,7 +1481,7 @@ private fun MusicHome(player: MediaController?, viewModel: MainViewModel) {
                                                             onAddToPlaylist = { trackToAddToPlaylist = song },
                                                             onDownload = {
                                                                 coroutineScope.launch {
-                                                                    DownloadHelper.downloadTrack(context, song, selectedAudioQuality, {}, { success ->
+                                                                    DownloadHelper.downloadTrack(context, song, selectedDownloadQuality, {}, { success ->
                                                                         if (success) {
                                                                             downloadedTracks = DownloadHelper.getDownloadedTracks(context)
                                                                             Toast.makeText(context, "Downloaded ${song.title}", Toast.LENGTH_SHORT).show()
