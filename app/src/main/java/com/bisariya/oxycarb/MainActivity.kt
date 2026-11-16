@@ -2529,6 +2529,34 @@ fun SongItem(
             Text(song.title, color = if (isCurrent) theme.accent else theme.textPrimary, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
             Text(song.artist, color = theme.secondary, fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
         }
+
+        if (downloadStatus is DownloadStatus.Downloading) {
+            Box(
+                contentAlignment = Alignment.Center,
+                modifier = Modifier.padding(horizontal = 6.dp)
+            ) {
+                CircularProgressIndicator(
+                    progress = { downloadStatus.progress },
+                    modifier = Modifier.size(26.dp),
+                    color = theme.accent,
+                    strokeWidth = 2.5.dp
+                )
+                Text(
+                    text = "${(downloadStatus.progress * 100).toInt()}%",
+                    fontSize = 8.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = theme.accent
+                )
+            }
+        } else if (downloadStatus is DownloadStatus.Downloaded) {
+            Icon(
+                Icons.Rounded.OfflinePin,
+                contentDescription = "Downloaded",
+                tint = theme.accent,
+                modifier = Modifier.size(22.dp).padding(horizontal = 4.dp)
+            )
+        }
+
         IconButton(onClick = onFavToggle) {
             Icon(
                 if (isFav) Icons.Rounded.Favorite else Icons.Rounded.FavoriteBorder,
@@ -2792,6 +2820,31 @@ fun FullScreenPlayer(
                 onClick = {}
             )
     ) {
+        // Top 70% Swipe Down Drag Area
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .fillMaxHeight(0.70f)
+                .pointerInput(Unit) {
+                    detectVerticalDragGestures(
+                        onDragEnd = {
+                            if (offsetY > 150f) {
+                                onClose()
+                            }
+                            offsetY = 0f
+                        },
+                        onDragCancel = {
+                            offsetY = 0f
+                        },
+                        onVerticalDrag = { _, dragAmount ->
+                            if (dragAmount > 0 || offsetY > 0) {
+                                offsetY = (offsetY + dragAmount).coerceAtLeast(0f)
+                            }
+                        }
+                    )
+                }
+        )
+
         FullScreenBackgroundVisualizer(
             isPlaying = playing,
             modifier = Modifier.fillMaxWidth().height(320.dp).align(Alignment.BottomCenter)
@@ -2801,28 +2854,9 @@ fun FullScreenPlayer(
             modifier = Modifier.fillMaxSize().padding(24.dp),
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
-            // Top Bar with dedicated drag-handle gesture for collapse
+            // Top Bar
             Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .pointerInput(Unit) {
-                        detectVerticalDragGestures(
-                            onDragEnd = {
-                                if (offsetY > 120.dp.toPx()) {
-                                    onClose()
-                                }
-                                offsetY = 0f
-                            },
-                            onDragCancel = {
-                                offsetY = 0f
-                            },
-                            onVerticalDrag = { _, dragAmount ->
-                                if (dragAmount > 0 || offsetY > 0) {
-                                    offsetY = (offsetY + dragAmount).coerceAtLeast(0f)
-                                }
-                            }
-                        )
-                    },
+                modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
@@ -3046,12 +3080,32 @@ fun FullScreenPlayer(
                 }
 
                 IconButton(onClick = onDownloadToggle) {
-                    Icon(
-                        if (isDownloaded) Icons.Rounded.OfflinePin else Icons.Rounded.DownloadForOffline,
-                        contentDescription = "Download",
-                        tint = if (isDownloaded) theme.accent else theme.textPrimary,
-                        modifier = Modifier.size(22.dp)
-                    )
+                    val dMap by DownloadHelper.downloadStateMap.collectAsState()
+                    val dStatus = dMap[track.id]
+                    if (dStatus is DownloadStatus.Downloading) {
+                        Box(contentAlignment = Alignment.Center) {
+                            CircularProgressIndicator(
+                                progress = { dStatus.progress },
+                                modifier = Modifier.size(22.dp),
+                                color = theme.accent,
+                                strokeWidth = 2.dp
+                            )
+                        }
+                    } else if (isDownloaded || dStatus is DownloadStatus.Downloaded) {
+                        Icon(
+                            Icons.Rounded.OfflinePin,
+                            contentDescription = "Downloaded",
+                            tint = theme.accent,
+                            modifier = Modifier.size(22.dp)
+                        )
+                    } else {
+                        Icon(
+                            Icons.Rounded.DownloadForOffline,
+                            contentDescription = "Download",
+                            tint = theme.textPrimary,
+                            modifier = Modifier.size(22.dp)
+                        )
+                    }
                 }
             }
 
