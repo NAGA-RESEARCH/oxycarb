@@ -1014,52 +1014,54 @@ private fun MusicHome(player: MediaController?, viewModel: MainViewModel) {
                 Scaffold(
                     containerColor = Color.Transparent,
                     bottomBar = {
-                        Column {
-                            if (current != null && !showFullScreenPlayer) {
-                                MiniPlayer(
-                                    track = current!!,
-                                    playing = playing,
-                                    progress = if (durationMs > 0) (currentPositionMs.toFloat() / durationMs.toFloat()) else 0f,
-                                    loading = streamLoading || player?.playbackState == Player.STATE_BUFFERING,
-                                    onPlayPause = { togglePlayPause() },
-                                    onNext = { playNextRelatedTrack() },
-                                    onClick = { showFullScreenPlayer = true }
-                                )
-                            }
+                        if (!showFullScreenPlayer) {
+                            Column {
+                                if (current != null) {
+                                    MiniPlayer(
+                                        track = current!!,
+                                        playing = playing,
+                                        progress = if (durationMs > 0) (currentPositionMs.toFloat() / durationMs.toFloat()) else 0f,
+                                        loading = streamLoading || player?.playbackState == Player.STATE_BUFFERING,
+                                        onPlayPause = { togglePlayPause() },
+                                        onNext = { playNextRelatedTrack() },
+                                        onClick = { showFullScreenPlayer = true }
+                                    )
+                                }
 
-                            if (!isWideScreen) {
-                                NavigationBar(
-                                    containerColor = theme.card.copy(alpha = 0.95f),
-                                    contentColor = theme.textPrimary
-                                ) {
-                                    NavigationBarItem(
-                                        icon = { Icon(Icons.Rounded.Home, contentDescription = "Home") },
-                                        label = { Text("Home") },
-                                        selected = currentTab == 0,
-                                        onClick = { currentTab = 0; showFullScreenPlayer = false },
-                                        colors = NavigationBarItemDefaults.colors(selectedIconColor = theme.accent, unselectedIconColor = theme.secondary, indicatorColor = theme.cardHover)
-                                    )
-                                    NavigationBarItem(
-                                        icon = { Icon(Icons.Rounded.Search, contentDescription = "Search") },
-                                        label = { Text("Search") },
-                                        selected = currentTab == 1,
-                                        onClick = { currentTab = 1; showFullScreenPlayer = false },
-                                        colors = NavigationBarItemDefaults.colors(selectedIconColor = theme.accent, unselectedIconColor = theme.secondary, indicatorColor = theme.cardHover)
-                                    )
-                                    NavigationBarItem(
-                                        icon = { Icon(Icons.Rounded.LibraryMusic, contentDescription = "Library") },
-                                        label = { Text("Library") },
-                                        selected = currentTab == 2,
-                                        onClick = { currentTab = 2; showFullScreenPlayer = false },
-                                        colors = NavigationBarItemDefaults.colors(selectedIconColor = theme.accent, unselectedIconColor = theme.secondary, indicatorColor = theme.cardHover)
-                                    )
-                                    NavigationBarItem(
-                                        icon = { Icon(Icons.Rounded.Settings, contentDescription = "Settings") },
-                                        label = { Text("Settings") },
-                                        selected = currentTab == 3,
-                                        onClick = { currentTab = 3; showFullScreenPlayer = false },
-                                        colors = NavigationBarItemDefaults.colors(selectedIconColor = theme.accent, unselectedIconColor = theme.secondary, indicatorColor = theme.cardHover)
-                                    )
+                                if (!isWideScreen) {
+                                    NavigationBar(
+                                        containerColor = theme.card.copy(alpha = 0.95f),
+                                        contentColor = theme.textPrimary
+                                    ) {
+                                        NavigationBarItem(
+                                            icon = { Icon(Icons.Rounded.Home, contentDescription = "Home") },
+                                            label = { Text("Home") },
+                                            selected = currentTab == 0,
+                                            onClick = { currentTab = 0; showFullScreenPlayer = false },
+                                            colors = NavigationBarItemDefaults.colors(selectedIconColor = theme.accent, unselectedIconColor = theme.secondary, indicatorColor = theme.cardHover)
+                                        )
+                                        NavigationBarItem(
+                                            icon = { Icon(Icons.Rounded.Search, contentDescription = "Search") },
+                                            label = { Text("Search") },
+                                            selected = currentTab == 1,
+                                            onClick = { currentTab = 1; showFullScreenPlayer = false },
+                                            colors = NavigationBarItemDefaults.colors(selectedIconColor = theme.accent, unselectedIconColor = theme.secondary, indicatorColor = theme.cardHover)
+                                        )
+                                        NavigationBarItem(
+                                            icon = { Icon(Icons.Rounded.LibraryMusic, contentDescription = "Library") },
+                                            label = { Text("Library") },
+                                            selected = currentTab == 2,
+                                            onClick = { currentTab = 2; showFullScreenPlayer = false },
+                                            colors = NavigationBarItemDefaults.colors(selectedIconColor = theme.accent, unselectedIconColor = theme.secondary, indicatorColor = theme.cardHover)
+                                        )
+                                        NavigationBarItem(
+                                            icon = { Icon(Icons.Rounded.Settings, contentDescription = "Settings") },
+                                            label = { Text("Settings") },
+                                            selected = currentTab == 3,
+                                            onClick = { currentTab = 3; showFullScreenPlayer = false },
+                                            colors = NavigationBarItemDefaults.colors(selectedIconColor = theme.accent, unselectedIconColor = theme.secondary, indicatorColor = theme.cardHover)
+                                        )
+                                    }
                                 }
                             }
                         }
@@ -1276,22 +1278,24 @@ private fun MusicHome(player: MediaController?, viewModel: MainViewModel) {
                                 verticalArrangement = Arrangement.spacedBy(12.dp),
                                 horizontalArrangement = Arrangement.spacedBy(12.dp)
                             ) {
-                                item(span = { GridItemSpan(maxLineSpan) }) {
-                                    Spacer(Modifier.height(16.dp))
-                                    Row(
-                                        modifier = Modifier.fillMaxWidth(),
-                                        verticalAlignment = Alignment.CenterVertically
-                                    ) {
-                                        if (!isWideScreen) {
-                                            AppLogo(modifier = Modifier.size(40.dp))
-                                            Spacer(Modifier.width(12.dp))
+                                if (currentTab != 3) {
+                                    item(span = { GridItemSpan(maxLineSpan) }) {
+                                        Spacer(Modifier.height(16.dp))
+                                        Row(
+                                            modifier = Modifier.fillMaxWidth(),
+                                            verticalAlignment = Alignment.CenterVertically
+                                        ) {
+                                            if (!isWideScreen) {
+                                                AppLogo(modifier = Modifier.size(40.dp))
+                                                Spacer(Modifier.width(12.dp))
+                                            }
+                                            Column(Modifier.weight(1f)) {
+                                                Text("OXYCARB", color = theme.textPrimary, fontSize = 20.sp, fontWeight = FontWeight.Bold)
+                                                Text("by AK Bisariya", color = theme.secondary, fontSize = 12.sp)
+                                            }
                                         }
-                                        Column(Modifier.weight(1f)) {
-                                            Text("OXYCARB", color = theme.textPrimary, fontSize = 20.sp, fontWeight = FontWeight.Bold)
-                                            Text("by AK Bisariya", color = theme.secondary, fontSize = 12.sp)
-                                        }
+                                        Spacer(Modifier.height(16.dp))
                                     }
-                                    Spacer(Modifier.height(16.dp))
                                 }
 
                                 when (currentTab) {
