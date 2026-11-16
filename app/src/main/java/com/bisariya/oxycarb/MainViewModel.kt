@@ -4,6 +4,8 @@ import android.app.Application
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.bisariya.oxycarb.db.AppDatabase
+import com.bisariya.oxycarb.db.PlaylistEntity
+import com.bisariya.oxycarb.db.PlaylistTrackCrossRef
 import com.bisariya.oxycarb.db.TrackHistoryEntity
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -13,12 +15,28 @@ import kotlinx.coroutines.launch
 import org.schabi.newpipe.extractor.ServiceList
 import java.net.UnknownHostException
 
+enum class PlaybackMode {
+    RADIO_AUTOPLAY,
+    PLAYLIST_LOOP
+}
+
+data class GenrePlaylist(
+    val id: String,
+    val title: String,
+    val query: String
+)
+
 class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val db = AppDatabase.getDatabase(application)
     private val dao = db.historyDao()
+    private val playlistDao = db.playlistDao()
 
     val recentSongs = dao.getRecentSongs().stateIn(viewModelScope, SharingStarted.WhileSubscribed(), emptyList())
     val recentPodcasts = dao.getRecentPodcasts().stateIn(viewModelScope, SharingStarted.WhileSubscribed(), emptyList())
+    val customPlaylists = playlistDao.getAllPlaylists().stateIn(viewModelScope, SharingStarted.WhileSubscribed(), emptyList())
+
+    val playbackMode = MutableStateFlow(PlaybackMode.RADIO_AUTOPLAY)
+    val playlistQueue = MutableStateFlow<List<TrackInfo>>(emptyList())
 
     val homeSuggestedSongs = MutableStateFlow<List<TrackInfo>>(emptyList())
     val homeLoading = MutableStateFlow(false)
@@ -32,6 +50,76 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     val searchError = MutableStateFlow<String?>(null)
 
     val currentTrack = MutableStateFlow<TrackInfo?>(null)
+
+    val genrePlaylists = listOf(
+        GenrePlaylist("1", "Lofi & Late Night Chill", "Lofi chill beats"),
+        GenrePlaylist("2", "Trending Bollywood / Hindi Hits", "Trending Bollywood Hits 2025"),
+        GenrePlaylist("3", "Workout & Phonk Energy", "Workout Phonk Gym Motivation"),
+        GenrePlaylist("4", "90s Retro Melodies", "90s Bollywood Retro Songs"),
+        GenrePlaylist("5", "Acoustic & Indie Unplugged", "Acoustic Indie Unplugged Hindi"),
+        GenrePlaylist("6", "Deep Focus & Coding Beats", "Deep Focus Coding Beats Cyberpunk")
+    )
+
+    val selectedPlaylist = MutableStateFlow<GenrePlaylist?>(null)
+    val selectedPlaylistTracks = MutableStateFlow<List<TrackInfo>>(emptyList())
+    val playlistLoading = MutableStateFlow(false)
+
+    fun createCustomPlaylist(name: String) {
+        viewModelScope.launch(Dispatchers.IO) {
+            playlistDao.createPlaylist(PlaylistEntity(name = name))
+        }
+    }
+
+    fun deleteCustomPlaylist(playlistId: Long) {
+        viewModelScope.launch(Dispatchers.IO) {
+            playlistDao.deletePlaylist(playlistId)
+        }
+    }
+
+    fun addTrackToCustomPlaylist(playlistId: Long, track: TrackInfo) {
+        viewModelScope.launch(Dispatchers.IO) {
+            playlistDao.addTrackToPlaylist(
+                PlaylistTrackCrossRef(
+                    playlistId = playlistId,
+                    trackId = track.id,
+                    title = track.title,
+                    artist = track.artist,
+                    durationMs = track.durationMs
+                )
+            )
+        }
+    }
+
+    fun removeTrackFromCustomPlaylist(playlistId: Long, trackId: String) {
+        viewModelScope.launch(Dispatchers.IO) {
+            playlistDao.removeTrackFromPlaylist(playlistId, trackId)
+        }
+    }
+
+    fun getTracksForCustomPlaylist(playlistId: Long) = playlistDao.getTracksForPlaylist(playlistId)
+
+    fun loadPlaylist(playlist: GenrePlaylist) {
+        selectedPlaylist.value = playlist
+        selectedPlaylistTracks.value = emptyList()
+        playlistLoading.value = true
+        viewModelScope.launch(Dispatchers.IO) {
+            try {
+                val extractor = ServiceList.YouTube.getSearchExtractor(playlist.query)
+                extractor.fetchPage()
+                val items = extractor.initialPage.items.filterIsInstance<org.schabi.newpipe.extractor.stream.StreamInfoItem>()
+                val results = items.map { TrackInfo(it.url.substringAfter("v="), it.name, it.uploaderName, it.duration * 1000L) }
+                selectedPlaylistTracks.value = results
+            } catch (e: Exception) {
+                // Ignore
+            } finally {
+                playlistLoading.value = false
+            }
+        }
+    }
+
+    fun closePlaylist() {
+        selectedPlaylist.value = null
+    }
 
     private val homeQueryPool = listOf(
         "Trending Hindi Songs",

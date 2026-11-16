@@ -1,7 +1,10 @@
 package com.bisariya.oxycarb
 
+import android.content.Intent
 import androidx.media3.common.AudioAttributes
 import androidx.media3.common.C
+import androidx.media3.common.ForwardingPlayer
+import androidx.media3.common.Player
 import androidx.media3.datasource.DefaultHttpDataSource
 import androidx.media3.exoplayer.DefaultLoadControl
 import androidx.media3.exoplayer.ExoPlayer
@@ -21,22 +24,20 @@ class PlaybackService : MediaSessionService() {
             .setUsage(C.USAGE_MEDIA)
             .build()
 
-        // Fast & Reliable Buffer (Prevents playback error on slow networks while playing fast)
         val loadControl = DefaultLoadControl.Builder()
             .setBufferDurationsMs(
-                1500,   // Min Buffer (1.5s)
-                15000,  // Max Buffer (15s)
-                1000,   // Buffer for Playback (1s)
-                1500    // Buffer after rebuffer (1.5s)
+                15000,
+                50000,
+                500,
+                1000
             )
             .setPrioritizeTimeOverSizeThresholds(true)
             .build()
 
-        // Standard Chrome User-Agent so ExoPlayer requests aren't blocked by YouTube CDN
         val dataSourceFactory = DefaultHttpDataSource.Factory()
             .setUserAgent("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36")
-            .setConnectTimeoutMs(10000)
-            .setReadTimeoutMs(10000)
+            .setConnectTimeoutMs(8000)
+            .setReadTimeoutMs(8000)
             .setAllowCrossProtocolRedirects(true)
 
         val mediaSourceFactory = DefaultMediaSourceFactory(this)
@@ -49,7 +50,46 @@ class PlaybackService : MediaSessionService() {
             .setLoadControl(loadControl)
             .build()
 
-        mediaSession = MediaSession.Builder(this, player).build()
+        val forwardingPlayer = object : ForwardingPlayer(player) {
+            override fun getAvailableCommands(): Player.Commands {
+                return super.getAvailableCommands().buildUpon()
+                    .add(Player.COMMAND_SEEK_TO_NEXT)
+                    .add(Player.COMMAND_SEEK_TO_PREVIOUS)
+                    .add(Player.COMMAND_SEEK_TO_NEXT_MEDIA_ITEM)
+                    .add(Player.COMMAND_SEEK_TO_PREVIOUS_MEDIA_ITEM)
+                    .build()
+            }
+
+            override fun isCommandAvailable(command: Int): Boolean {
+                return if (command == Player.COMMAND_SEEK_TO_NEXT ||
+                    command == Player.COMMAND_SEEK_TO_PREVIOUS ||
+                    command == Player.COMMAND_SEEK_TO_NEXT_MEDIA_ITEM ||
+                    command == Player.COMMAND_SEEK_TO_PREVIOUS_MEDIA_ITEM
+                ) {
+                    true
+                } else {
+                    super.isCommandAvailable(command)
+                }
+            }
+
+            override fun seekToNext() {
+                sendBroadcast(Intent("com.bisariya.oxycarb.ACTION_SKIP_NEXT"))
+            }
+
+            override fun seekToNextMediaItem() {
+                seekToNext()
+            }
+
+            override fun seekToPrevious() {
+                sendBroadcast(Intent("com.bisariya.oxycarb.ACTION_SKIP_PREVIOUS"))
+            }
+
+            override fun seekToPreviousMediaItem() {
+                seekToPrevious()
+            }
+        }
+
+        mediaSession = MediaSession.Builder(this, forwardingPlayer).build()
     }
 
     override fun onGetSession(controllerInfo: MediaSession.ControllerInfo): MediaSession? {

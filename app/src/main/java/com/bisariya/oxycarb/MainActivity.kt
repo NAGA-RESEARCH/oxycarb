@@ -1,7 +1,10 @@
 package com.bisariya.oxycarb
 
+import android.content.BroadcastReceiver
 import android.content.ComponentName
 import android.content.Context
+import android.content.Intent
+import android.content.IntentFilter
 import android.content.SharedPreferences
 import android.os.Build
 import android.os.Bundle
@@ -22,12 +25,13 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
+import androidx.compose.foundation.lazy.items as lazyListItems
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.GridItemSpan
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
-import androidx.compose.foundation.lazy.grid.items
+import androidx.compose.foundation.lazy.grid.items as lazyGridItems
 import androidx.compose.foundation.lazy.grid.rememberLazyGridState
-import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
@@ -35,7 +39,6 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.*
 import androidx.compose.material3.*
 import androidx.compose.material3.pulltorefresh.PullToRefreshBox
-import androidx.compose.material3.pulltorefresh.rememberPullToRefreshState
 import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
@@ -62,11 +65,12 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.media3.common.MediaItem
 import androidx.media3.common.MediaMetadata
-import androidx.media3.common.PlaybackException
 import androidx.media3.common.PlaybackParameters
 import androidx.media3.common.Player
 import androidx.media3.session.MediaController
 import androidx.media3.session.SessionToken
+import com.bisariya.oxycarb.db.PlaylistEntity
+import com.bisariya.oxycarb.db.PlaylistTrackCrossRef
 import com.google.common.util.concurrent.ListenableFuture
 import com.google.common.util.concurrent.MoreExecutors
 import kotlinx.coroutines.Dispatchers
@@ -420,9 +424,14 @@ private fun MusicHome(player: MediaController?, viewModel: MainViewModel) {
 
     val recentSongs by viewModel.recentSongs.collectAsState()
     val recentPodcasts by viewModel.recentPodcasts.collectAsState()
+    val customPlaylists by viewModel.customPlaylists.collectAsState()
     val homeSuggestedSongs by viewModel.homeSuggestedSongs.collectAsState()
     val homeLoading by viewModel.homeLoading.collectAsState()
     val homeLoadingMore by viewModel.homeLoadingMore.collectAsState()
+
+    val selectedPlaylist by viewModel.selectedPlaylist.collectAsState()
+    val selectedPlaylistTracks by viewModel.selectedPlaylistTracks.collectAsState()
+    val playlistLoading by viewModel.playlistLoading.collectAsState()
 
     val searchResultsSongs by viewModel.searchResultsSongs.collectAsState()
     val searchResultsPodcasts by viewModel.searchResultsPodcasts.collectAsState()
@@ -431,6 +440,8 @@ private fun MusicHome(player: MediaController?, viewModel: MainViewModel) {
     val searchError by viewModel.searchError.collectAsState()
 
     var favoriteTracks by remember { mutableStateOf(FavManager.getFavs(context)) }
+    var downloadedTracks by remember { mutableStateOf(DownloadHelper.getDownloadedTracks(context)) }
+
     var current by remember { mutableStateOf<TrackInfo?>(null) }
     var playing by remember { mutableStateOf(false) }
     var currentPositionMs by remember { mutableStateOf(0L) }
@@ -439,11 +450,17 @@ private fun MusicHome(player: MediaController?, viewModel: MainViewModel) {
     var shuffle by rememberSaveable { mutableStateOf(false) }
     var repeatModeState by rememberSaveable { mutableIntStateOf(Player.REPEAT_MODE_OFF) }
     var showFullScreenPlayer by rememberSaveable { mutableStateOf(false) }
+    var showQueueSheet by rememberSaveable { mutableStateOf(false) }
+    var showCreatePlaylistDialog by rememberSaveable { mutableStateOf(false) }
+    var createPlaylistInput by rememberSaveable { mutableStateOf("") }
+    var trackToAddToPlaylist by remember { mutableStateOf<TrackInfo?>(null) }
+
     var playbackError by remember { mutableStateOf<String?>(null) }
     var playbackJob by remember { mutableStateOf<Job?>(null) }
 
     var playbackSpeed by remember { mutableFloatStateOf(1f) }
     var dataSaver by remember { mutableStateOf(prefs.getBoolean("data_saver", false)) }
+    var selectedAudioQuality by remember { mutableStateOf(prefs.getString("audio_quality", "Balanced (96kbps)") ?: "Balanced (96kbps)") }
     var autoPlayEnabled by remember { mutableStateOf(prefs.getBoolean("auto_play", true)) }
     var selectedEqPreset by remember { mutableStateOf(prefs.getString("eq_preset", "Normal") ?: "Normal") }
 
@@ -483,11 +500,18 @@ private fun MusicHome(player: MediaController?, viewModel: MainViewModel) {
         }
     }
 
-    fun startTrack(track: TrackInfo, isUserClick: Boolean = true, pushToStack: Boolean = true) {
+    fun startTrack(track: TrackInfo, mode: PlaybackMode = PlaybackMode.RADIO_AUTOPLAY, queue: List<TrackInfo> = emptyList(), isUserClick: Boolean = true, pushToStack: Boolean = true) {
         playbackJob?.cancel()
         playbackJob = coroutineScope.launch(Dispatchers.Main) {
             if (pushToStack && current != null && current?.id != track.id) {
                 playedHistoryStack.add(current!!)
+            }
+
+            if (isUserClick) {
+                viewModel.playbackMode.value = mode
+                if (mode == PlaybackMode.PLAYLIST_LOOP) {
+                    viewModel.playlistQueue.value = queue
+                }
             }
 
             current = track
@@ -498,7 +522,8 @@ private fun MusicHome(player: MediaController?, viewModel: MainViewModel) {
 
             viewModel.addToHistory(track)
 
-            val streamUrl = YoutubeExtractor.getAudioUrl(track.id, dataSaver)
+            val localUri = DownloadHelper.getLocalUri(context, track.id)
+            val streamUrl = localUri ?: YoutubeExtractor.getAudioUrl(track.id, selectedAudioQuality)
             if (!isActive) return@launch
 
             if (streamUrl == null) {
@@ -524,7 +549,7 @@ private fun MusicHome(player: MediaController?, viewModel: MainViewModel) {
             streamLoading = false
             playing = true
 
-            if (isUserClick) {
+            if (isUserClick && viewModel.playbackMode.value == PlaybackMode.RADIO_AUTOPLAY) {
                 coroutineScope.launch(Dispatchers.IO) {
                     val related = YoutubeExtractor.getRelatedTracks(track.id)
                     relatedQueue.clear()
@@ -535,16 +560,33 @@ private fun MusicHome(player: MediaController?, viewModel: MainViewModel) {
     }
 
     fun playNextRelatedTrack() {
-        if (autoPlayEnabled && relatedQueue.isNotEmpty()) {
-            val nextTrack = if (shuffle) relatedQueue.random() else relatedQueue.removeAt(0)
-            startTrack(nextTrack, isUserClick = false, pushToStack = true)
+        if (viewModel.playbackMode.value == PlaybackMode.PLAYLIST_LOOP) {
+            val queue = viewModel.playlistQueue.value
+            if (queue.isNotEmpty()) {
+                val currentIndex = queue.indexOfFirst { it.id == current?.id }
+                val nextTrack = if (shuffle) {
+                    queue.random()
+                } else {
+                    if (currentIndex != -1 && currentIndex < queue.size - 1) {
+                        queue[currentIndex + 1]
+                    } else {
+                        queue.first()
+                    }
+                }
+                startTrack(nextTrack, mode = PlaybackMode.PLAYLIST_LOOP, isUserClick = false, pushToStack = true)
+            }
+        } else {
+            if (autoPlayEnabled && relatedQueue.isNotEmpty()) {
+                val nextTrack = if (shuffle) relatedQueue.random() else relatedQueue.removeAt(0)
+                startTrack(nextTrack, mode = PlaybackMode.RADIO_AUTOPLAY, isUserClick = false, pushToStack = true)
+            }
         }
     }
 
     fun playPreviousTrack() {
         if (playedHistoryStack.isNotEmpty()) {
             val prevTrack = playedHistoryStack.removeAt(playedHistoryStack.size - 1)
-            startTrack(prevTrack, isUserClick = false, pushToStack = false)
+            startTrack(prevTrack, mode = viewModel.playbackMode.value, isUserClick = false, pushToStack = false)
         } else {
             player?.seekTo(0L)
             currentPositionMs = 0L
@@ -565,6 +607,29 @@ private fun MusicHome(player: MediaController?, viewModel: MainViewModel) {
             Toast.makeText(context, "Sleep timer set for $minutes minutes.", Toast.LENGTH_SHORT).show()
         } else {
             Toast.makeText(context, "Sleep timer turned off.", Toast.LENGTH_SHORT).show()
+        }
+    }
+
+    DisposableEffect(context) {
+        val receiver = object : BroadcastReceiver() {
+            override fun onReceive(context: Context?, intent: Intent?) {
+                when (intent?.action) {
+                    "com.bisariya.oxycarb.ACTION_SKIP_NEXT" -> playNextRelatedTrack()
+                    "com.bisariya.oxycarb.ACTION_SKIP_PREVIOUS" -> playPreviousTrack()
+                }
+            }
+        }
+        val filter = IntentFilter().apply {
+            addAction("com.bisariya.oxycarb.ACTION_SKIP_NEXT")
+            addAction("com.bisariya.oxycarb.ACTION_SKIP_PREVIOUS")
+        }
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            context.registerReceiver(receiver, filter, Context.RECEIVER_NOT_EXPORTED)
+        } else {
+            context.registerReceiver(receiver, filter)
+        }
+        onDispose {
+            context.unregisterReceiver(receiver)
         }
     }
 
@@ -618,6 +683,8 @@ private fun MusicHome(player: MediaController?, viewModel: MainViewModel) {
         onDispose { player?.removeListener(listener) }
     }
 
+    val prefetchedSet = remember { mutableStateOf(mutableSetOf<String>()) }
+
     LaunchedEffect(player, playing) {
         while (playing) {
             val pos = player?.currentPosition ?: 0L
@@ -625,6 +692,27 @@ private fun MusicHome(player: MediaController?, viewModel: MainViewModel) {
             if (dur > 0) {
                 currentPositionMs = pos
                 durationMs = dur
+
+                val progressFraction = pos.toFloat() / dur.toFloat()
+                if (progressFraction >= 0.70f) {
+                    val nextTrack = if (viewModel.playbackMode.value == PlaybackMode.PLAYLIST_LOOP) {
+                        val queue = viewModel.playlistQueue.value
+                        val currentIndex = queue.indexOfFirst { it.id == current?.id }
+                        if (shuffle) queue.randomOrNull() else queue.getOrNull(currentIndex + 1) ?: queue.firstOrNull()
+                    } else {
+                        relatedQueue.firstOrNull()
+                    }
+
+                    if (nextTrack != null && !prefetchedSet.value.contains(nextTrack.id)) {
+                        prefetchedSet.value.add(nextTrack.id)
+                        coroutineScope.launch(Dispatchers.IO) {
+                            val localUri = DownloadHelper.getLocalUri(context, nextTrack.id)
+                            if (localUri == null) {
+                                YoutubeExtractor.getAudioUrl(nextTrack.id, selectedAudioQuality)
+                            }
+                        }
+                    }
+                }
             }
             delay(250)
         }
@@ -661,8 +749,8 @@ private fun MusicHome(player: MediaController?, viewModel: MainViewModel) {
                             colors = NavigationRailItemDefaults.colors(selectedIconColor = theme.accent, unselectedIconColor = theme.secondary, indicatorColor = theme.cardHover)
                         )
                         NavigationRailItem(
-                            icon = { Icon(Icons.Rounded.History, contentDescription = "History") },
-                            label = { Text("History") },
+                            icon = { Icon(Icons.Rounded.LibraryMusic, contentDescription = "Library") },
+                            label = { Text("Library") },
                             selected = currentTab == 2,
                             onClick = { currentTab = 2; showFullScreenPlayer = false },
                             colors = NavigationRailItemDefaults.colors(selectedIconColor = theme.accent, unselectedIconColor = theme.secondary, indicatorColor = theme.cardHover)
@@ -713,8 +801,8 @@ private fun MusicHome(player: MediaController?, viewModel: MainViewModel) {
                                         colors = NavigationBarItemDefaults.colors(selectedIconColor = theme.accent, unselectedIconColor = theme.secondary, indicatorColor = theme.cardHover)
                                     )
                                     NavigationBarItem(
-                                        icon = { Icon(Icons.Rounded.History, contentDescription = "History") },
-                                        label = { Text("History") },
+                                        icon = { Icon(Icons.Rounded.LibraryMusic, contentDescription = "Library") },
+                                        label = { Text("Library") },
                                         selected = currentTab == 2,
                                         onClick = { currentTab = 2; showFullScreenPlayer = false },
                                         colors = NavigationBarItemDefaults.colors(selectedIconColor = theme.accent, unselectedIconColor = theme.secondary, indicatorColor = theme.cardHover)
@@ -784,7 +872,9 @@ private fun MusicHome(player: MediaController?, viewModel: MainViewModel) {
                                                     "✨ 90s Melodies" to "90s Bollywood Melodies",
                                                     "🎸 Acoustic" to "Romantic Acoustic Hindi"
                                                 )
-                                                items(vibes) { (label, vibeQuery) ->
+                                                lazyListItems(vibes) { vibePair ->
+                                                    val label = vibePair.first
+                                                    val vibeQuery = vibePair.second
                                                     FilterChip(
                                                         selected = selectedVibe == label,
                                                         onClick = {
@@ -801,8 +891,23 @@ private fun MusicHome(player: MediaController?, viewModel: MainViewModel) {
                                                     )
                                                 }
                                             }
+
+                                            Spacer(Modifier.height(24.dp))
+                                            Text("Curated Genre Playlists", color = theme.textPrimary, fontSize = 18.sp, fontWeight = FontWeight.Bold)
+                                            Spacer(Modifier.height(12.dp))
+
+                                            LazyRow(
+                                                horizontalArrangement = Arrangement.spacedBy(12.dp),
+                                                modifier = Modifier.fillMaxWidth()
+                                            ) {
+                                                lazyListItems(viewModel.genrePlaylists) { playlist ->
+                                                    PlaylistCard(playlist, theme) {
+                                                        viewModel.loadPlaylist(playlist)
+                                                    }
+                                                }
+                                            }
                                         }
-                                        Spacer(Modifier.height(8.dp))
+                                        Spacer(Modifier.height(16.dp))
                                     }
 
                                     if (homeLoading && homeSuggestedSongs.isEmpty()) {
@@ -816,10 +921,29 @@ private fun MusicHome(player: MediaController?, viewModel: MainViewModel) {
                                             Text("No songs available right now. Swipe down to refresh!", color = theme.secondary, fontSize = 14.sp)
                                         }
                                     } else {
-                                        items(items = homeSuggestedSongs, key = { it.id }) { song ->
-                                            SongItem(song, current?.id == song.id, playing, favoriteTracks.any { it.id == song.id },
-                                                { FavManager.toggleFav(context, song); favoriteTracks = FavManager.getFavs(context) },
-                                                { startTrack(song) })
+                                        lazyGridItems(items = homeSuggestedSongs, key = { it.id }) { song ->
+                                            SongItem(
+                                                song = song,
+                                                isCurrent = current?.id == song.id,
+                                                isPlaying = playing,
+                                                isFav = favoriteTracks.any { it.id == song.id },
+                                                onFavToggle = { FavManager.toggleFav(context, song); favoriteTracks = FavManager.getFavs(context) },
+                                                onClick = { startTrack(song, mode = PlaybackMode.RADIO_AUTOPLAY, isUserClick = true) },
+                                                onPlayNext = { relatedQueue.add(0, song); Toast.makeText(context, "Added to Play Next", Toast.LENGTH_SHORT).show() },
+                                                onAddToPlaylist = { trackToAddToPlaylist = song },
+                                                onDownload = {
+                                                    coroutineScope.launch {
+                                                        DownloadHelper.downloadTrack(context, song, selectedAudioQuality, {}, { success ->
+                                                            if (success) {
+                                                                downloadedTracks = DownloadHelper.getDownloadedTracks(context)
+                                                                Toast.makeText(context, "Downloaded ${song.title}", Toast.LENGTH_SHORT).show()
+                                                            } else {
+                                                                Toast.makeText(context, "Download failed", Toast.LENGTH_SHORT).show()
+                                                            }
+                                                        })
+                                                    }
+                                                }
+                                            )
                                         }
 
                                         if (homeLoadingMore) {
@@ -936,33 +1060,45 @@ private fun MusicHome(player: MediaController?, viewModel: MainViewModel) {
                                             if (list.isEmpty() && query.isNotBlank()) {
                                                 item(span = { GridItemSpan(maxLineSpan) }) { Text("No results found.", color = theme.secondary) }
                                             } else {
-                                                items(items = list, key = { it.id }) { song ->
-                                                    SongItem(song, current?.id == song.id, playing, favoriteTracks.any { it.id == song.id },
-                                                        { FavManager.toggleFav(context, song); favoriteTracks = FavManager.getFavs(context) },
-                                                        {
+                                                lazyGridItems(items = list, key = { it.id }) { song ->
+                                                    SongItem(
+                                                        song = song,
+                                                        isCurrent = current?.id == song.id,
+                                                        isPlaying = playing,
+                                                        isFav = favoriteTracks.any { it.id == song.id },
+                                                        onFavToggle = { FavManager.toggleFav(context, song); favoriteTracks = FavManager.getFavs(context) },
+                                                        onClick = {
                                                             keyboardController?.hide()
                                                             focusManager.clearFocus()
-                                                            startTrack(song)
-                                                        })
+                                                            startTrack(song, mode = PlaybackMode.RADIO_AUTOPLAY, isUserClick = true)
+                                                        },
+                                                        onPlayNext = { relatedQueue.add(0, song); Toast.makeText(context, "Added to Play Next", Toast.LENGTH_SHORT).show() },
+                                                        onAddToPlaylist = { trackToAddToPlaylist = song },
+                                                        onDownload = {
+                                                            coroutineScope.launch {
+                                                                DownloadHelper.downloadTrack(context, song, selectedAudioQuality, {}, { success ->
+                                                                    if (success) {
+                                                                        downloadedTracks = DownloadHelper.getDownloadedTracks(context)
+                                                                        Toast.makeText(context, "Downloaded ${song.title}", Toast.LENGTH_SHORT).show()
+                                                                    } else {
+                                                                        Toast.makeText(context, "Download failed", Toast.LENGTH_SHORT).show()
+                                                                    }
+                                                                })
+                                                            }
+                                                        }
+                                                    )
                                                 }
                                             }
                                         }
                                     }
 
-                                    2 -> { // HISTORY & FAVORITES TAB
+                                    2 -> { // LIBRARY TAB (HISTORY, FAVORITES, CUSTOM PLAYLISTS, DOWNLOADS)
                                         item(span = { GridItemSpan(maxLineSpan) }) {
-                                            Row(Modifier.fillMaxWidth().padding(bottom = 12.dp)) {
-                                                FilterChip(
-                                                    selected = historyCategory == 0,
-                                                    onClick = { historyCategory = 0 },
-                                                    label = { Text("Listening History (24h)") },
-                                                    modifier = Modifier.padding(end = 8.dp)
-                                                )
-                                                FilterChip(
-                                                    selected = historyCategory == 1,
-                                                    onClick = { historyCategory = 1 },
-                                                    label = { Text("Favorite Songs (${favoriteTracks.size})") }
-                                                )
+                                            LazyRow(Modifier.fillMaxWidth().padding(bottom = 12.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                                item { FilterChip(selected = historyCategory == 0, onClick = { historyCategory = 0 }, label = { Text("History (24h)") }) }
+                                                item { FilterChip(selected = historyCategory == 1, onClick = { historyCategory = 1 }, label = { Text("Favorites (${favoriteTracks.size})") }) }
+                                                item { FilterChip(selected = historyCategory == 2, onClick = { historyCategory = 2 }, label = { Text("Playlists (${customPlaylists.size})") }) }
+                                                item { FilterChip(selected = historyCategory == 3, onClick = { historyCategory = 3 }, label = { Text("Downloads (${downloadedTracks.size})") }) }
                                             }
                                         }
 
@@ -974,39 +1110,124 @@ private fun MusicHome(player: MediaController?, viewModel: MainViewModel) {
                                             if (recentSongs.isEmpty()) {
                                                 item(span = { GridItemSpan(maxLineSpan) }) { Text("No recently played songs.", color = theme.secondary) }
                                             } else {
-                                                items(items = recentSongs.map { it.toTrackInfo() }, key = { it.id }) { song ->
-                                                    SongItem(song, current?.id == song.id, playing, favoriteTracks.any { it.id == song.id },
-                                                        { FavManager.toggleFav(context, song); favoriteTracks = FavManager.getFavs(context) },
-                                                        { startTrack(song) })
+                                                val list = recentSongs.map { it.toTrackInfo() }
+                                                lazyGridItems(items = list, key = { it.id }) { song ->
+                                                    SongItem(
+                                                        song = song,
+                                                        isCurrent = current?.id == song.id,
+                                                        isPlaying = playing,
+                                                        isFav = favoriteTracks.any { it.id == song.id },
+                                                        onFavToggle = { FavManager.toggleFav(context, song); favoriteTracks = FavManager.getFavs(context) },
+                                                        onClick = { startTrack(song, mode = PlaybackMode.RADIO_AUTOPLAY, isUserClick = true) }
+                                                    )
                                                 }
                                             }
-
-                                            item(span = { GridItemSpan(maxLineSpan) }) {
-                                                Spacer(Modifier.height(16.dp))
-                                                Text("Recently Played Podcasts", color = theme.textPrimary, fontSize = 18.sp, fontWeight = FontWeight.Bold)
-                                            }
-
-                                            if (recentPodcasts.isEmpty()) {
-                                                item(span = { GridItemSpan(maxLineSpan) }) { Text("No recently played podcasts.", color = theme.secondary) }
-                                            } else {
-                                                items(items = recentPodcasts.map { it.toTrackInfo() }, key = { it.id }) { song ->
-                                                    SongItem(song, current?.id == song.id, playing, favoriteTracks.any { it.id == song.id },
-                                                        { FavManager.toggleFav(context, song); favoriteTracks = FavManager.getFavs(context) },
-                                                        { startTrack(song) })
-                                                }
-                                            }
-                                        } else { // FAVORITES SECTION
+                                        } else if (historyCategory == 1) { // FAVORITES
                                             item(span = { GridItemSpan(maxLineSpan) }) {
                                                 Text("Saved Favorite Songs", color = theme.textPrimary, fontSize = 18.sp, fontWeight = FontWeight.Bold)
                                             }
 
                                             if (favoriteTracks.isEmpty()) {
-                                                item(span = { GridItemSpan(maxLineSpan) }) { Text("No favorite songs saved yet. Tap heart icon on any song to save!", color = theme.secondary) }
+                                                item(span = { GridItemSpan(maxLineSpan) }) { Text("No favorite songs saved yet.", color = theme.secondary) }
                                             } else {
-                                                items(items = favoriteTracks, key = { it.id }) { song ->
-                                                    SongItem(song, current?.id == song.id, playing, true,
-                                                        { FavManager.toggleFav(context, song); favoriteTracks = FavManager.getFavs(context) },
-                                                        { startTrack(song) })
+                                                lazyGridItems(items = favoriteTracks, key = { it.id }) { song ->
+                                                    SongItem(
+                                                        song = song,
+                                                        isCurrent = current?.id == song.id,
+                                                        isPlaying = playing,
+                                                        isFav = true,
+                                                        onFavToggle = { FavManager.toggleFav(context, song); favoriteTracks = FavManager.getFavs(context) },
+                                                        onClick = { startTrack(song, mode = PlaybackMode.RADIO_AUTOPLAY, isUserClick = true) }
+                                                    )
+                                                }
+                                            }
+                                        } else if (historyCategory == 2) { // CUSTOM PLAYLISTS
+                                            item(span = { GridItemSpan(maxLineSpan) }) {
+                                                Row(
+                                                    modifier = Modifier.fillMaxWidth(),
+                                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                                    verticalAlignment = Alignment.CenterVertically
+                                                ) {
+                                                    Text("Your Custom Playlists", color = theme.textPrimary, fontSize = 18.sp, fontWeight = FontWeight.Bold)
+                                                    Button(
+                                                        onClick = { showCreatePlaylistDialog = true },
+                                                        colors = ButtonDefaults.buttonColors(containerColor = theme.accent)
+                                                    ) {
+                                                        Icon(Icons.Rounded.Add, contentDescription = null, modifier = Modifier.size(18.dp))
+                                                        Spacer(Modifier.width(4.dp))
+                                                        Text("Create", fontSize = 12.sp)
+                                                    }
+                                                }
+                                            }
+
+                                            if (customPlaylists.isEmpty()) {
+                                                item(span = { GridItemSpan(maxLineSpan) }) {
+                                                    Text("No custom playlists created yet. Tap Create to add one!", color = theme.secondary)
+                                                }
+                                            } else {
+                                                lazyGridItems(items = customPlaylists, key = { it.playlistId }) { playlist ->
+                                                    Row(
+                                                        modifier = Modifier
+                                                            .fillMaxWidth()
+                                                            .glass()
+                                                            .clickable {
+                                                                viewModel.loadPlaylist(
+                                                                    GenrePlaylist(
+                                                                        id = playlist.playlistId.toString(),
+                                                                        title = playlist.name,
+                                                                        query = playlist.name
+                                                                    )
+                                                                )
+                                                            }
+                                                            .padding(16.dp),
+                                                        verticalAlignment = Alignment.CenterVertically
+                                                    ) {
+                                                        Icon(Icons.Rounded.PlaylistPlay, contentDescription = null, tint = theme.accent, modifier = Modifier.size(28.dp))
+                                                        Spacer(Modifier.width(12.dp))
+                                                        Column(Modifier.weight(1f)) {
+                                                            Text(playlist.name, color = theme.textPrimary, fontWeight = FontWeight.Bold)
+                                                            Text("Custom Playlist", color = theme.secondary, fontSize = 12.sp)
+                                                        }
+                                                        IconButton(onClick = { viewModel.deleteCustomPlaylist(playlist.playlistId) }) {
+                                                            Icon(Icons.Rounded.Delete, contentDescription = "Delete", tint = theme.secondary)
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                        } else if (historyCategory == 3) { // OFFLINE DOWNLOADS
+                                            item(span = { GridItemSpan(maxLineSpan) }) {
+                                                Text("Downloaded Songs (Offline)", color = theme.textPrimary, fontSize = 18.sp, fontWeight = FontWeight.Bold)
+                                            }
+
+                                            if (downloadedTracks.isEmpty()) {
+                                                item(span = { GridItemSpan(maxLineSpan) }) {
+                                                    Text("No downloaded songs. Tap download option on any song to save offline!", color = theme.secondary)
+                                                }
+                                            } else {
+                                                lazyGridItems(items = downloadedTracks, key = { it.id }) { song ->
+                                                    Row(
+                                                        modifier = Modifier
+                                                            .fillMaxWidth()
+                                                            .glass()
+                                                            .clickable { startTrack(song, mode = PlaybackMode.RADIO_AUTOPLAY, isUserClick = true) }
+                                                            .padding(12.dp),
+                                                        verticalAlignment = Alignment.CenterVertically
+                                                    ) {
+                                                        Icon(Icons.Rounded.OfflinePin, contentDescription = null, tint = theme.accent, modifier = Modifier.size(24.dp))
+                                                        Spacer(Modifier.width(12.dp))
+                                                        Column(Modifier.weight(1f)) {
+                                                            Text(song.title, color = theme.textPrimary, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                                            Text(song.artist, color = theme.secondary, fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                                        }
+                                                        IconButton(
+                                                            onClick = {
+                                                                DownloadHelper.deleteDownload(context, song.id)
+                                                                downloadedTracks = DownloadHelper.getDownloadedTracks(context)
+                                                            }
+                                                        ) {
+                                                            Icon(Icons.Rounded.Delete, contentDescription = "Delete Download", tint = theme.secondary)
+                                                        }
+                                                    }
                                                 }
                                             }
                                         }
@@ -1037,7 +1258,7 @@ private fun MusicHome(player: MediaController?, viewModel: MainViewModel) {
                                                     modifier = Modifier.fillMaxWidth(),
                                                     horizontalArrangement = Arrangement.spacedBy(8.dp)
                                                 ) {
-                                                    items(AppThemeList) { appTheme ->
+                                                    lazyListItems(AppThemeList) { appTheme ->
                                                         FilterChip(
                                                             selected = savedThemeName == appTheme.name,
                                                             onClick = {
@@ -1060,20 +1281,33 @@ private fun MusicHome(player: MediaController?, viewModel: MainViewModel) {
                                         }
 
                                         item(span = { GridItemSpan(maxLineSpan) }) {
-                                            Row(Modifier.fillMaxWidth().glass().padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
-                                                Icon(Icons.Rounded.DataSaverOn, contentDescription = null, tint = theme.accent, modifier = Modifier.size(24.dp))
-                                                Spacer(Modifier.width(12.dp))
-                                                Column(Modifier.weight(1f)) {
-                                                    Text("Data Saver Mode", color = theme.textPrimary, fontWeight = FontWeight.SemiBold)
-                                                    Text("Stream audio in lower quality to save data", color = theme.secondary, fontSize = 12.sp)
-                                                }
-                                                Switch(
-                                                    checked = dataSaver,
-                                                    onCheckedChange = {
-                                                        dataSaver = it
-                                                        prefs.edit().putBoolean("data_saver", it).apply()
+                                            Column(Modifier.fillMaxWidth().glass().padding(16.dp)) {
+                                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                                    Icon(Icons.Rounded.HighQuality, contentDescription = null, tint = theme.accent, modifier = Modifier.size(24.dp))
+                                                    Spacer(Modifier.width(12.dp))
+                                                    Column {
+                                                        Text("Audio Quality / Bitrate", color = theme.textPrimary, fontWeight = FontWeight.SemiBold)
+                                                        Text("Current: $selectedAudioQuality", color = theme.secondary, fontSize = 12.sp)
                                                     }
-                                                )
+                                                }
+                                                Spacer(Modifier.height(12.dp))
+                                                LazyRow(
+                                                    modifier = Modifier.fillMaxWidth(),
+                                                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                                ) {
+                                                    val options = listOf("Data Saver (48kbps)", "Balanced (96kbps)", "High Quality (128kbps+)")
+                                                    lazyListItems(options) { quality ->
+                                                        FilterChip(
+                                                            selected = selectedAudioQuality == quality,
+                                                            onClick = {
+                                                                selectedAudioQuality = quality
+                                                                prefs.edit().putString("audio_quality", quality).apply()
+                                                                Toast.makeText(context, "Audio quality set to $quality", Toast.LENGTH_SHORT).show()
+                                                            },
+                                                            label = { Text(quality, fontSize = 12.sp) }
+                                                        )
+                                                    }
+                                                }
                                             }
                                         }
 
@@ -1110,7 +1344,8 @@ private fun MusicHome(player: MediaController?, viewModel: MainViewModel) {
                                                     modifier = Modifier.fillMaxWidth(),
                                                     horizontalArrangement = Arrangement.spacedBy(8.dp)
                                                 ) {
-                                                    items(listOf("Normal", "Bass Boost", "Vocal", "Rock", "Pop")) { preset ->
+                                                    val presets = listOf("Normal", "Bass Boost", "Vocal", "Rock", "Pop")
+                                                    lazyListItems(presets) { preset ->
                                                         FilterChip(
                                                             selected = selectedEqPreset == preset,
                                                             onClick = {
@@ -1140,7 +1375,8 @@ private fun MusicHome(player: MediaController?, viewModel: MainViewModel) {
                                                     modifier = Modifier.fillMaxWidth(),
                                                     horizontalArrangement = Arrangement.spacedBy(8.dp)
                                                 ) {
-                                                    items(listOf(0 to "Off", 15 to "15m", 30 to "30m", 60 to "60m", -1 to "Custom")) { (mins, label) ->
+                                                    val timerOpts = listOf(0 to "Off", 15 to "15m", 30 to "30m", 60 to "60m", -1 to "Custom")
+                                                    lazyListItems(timerOpts) { (mins, label) ->
                                                         FilterChip(
                                                             selected = (mins != -1 && sleepTimerMinutes == mins) || (mins == -1 && sleepTimerMinutes > 60),
                                                             onClick = {
@@ -1270,6 +1506,38 @@ private fun MusicHome(player: MediaController?, viewModel: MainViewModel) {
                         }
                     }
 
+                    if (selectedPlaylist != null) {
+                        PlaylistDetailScreen(
+                            playlist = selectedPlaylist!!,
+                            tracks = selectedPlaylistTracks,
+                            loading = playlistLoading,
+                            theme = theme,
+                            playing = playing,
+                            currentTrack = current,
+                            favoriteTracks = favoriteTracks,
+                            onFavToggle = { track ->
+                                FavManager.toggleFav(context, track)
+                                favoriteTracks = FavManager.getFavs(context)
+                            },
+                            onClose = { viewModel.closePlaylist() },
+                            onPlayAll = {
+                                if (selectedPlaylistTracks.isNotEmpty()) {
+                                    startTrack(selectedPlaylistTracks.first(), mode = PlaybackMode.PLAYLIST_LOOP, queue = selectedPlaylistTracks, isUserClick = true)
+                                }
+                            },
+                            onShuffle = {
+                                if (selectedPlaylistTracks.isNotEmpty()) {
+                                    shuffle = true
+                                    player?.shuffleModeEnabled = true
+                                    startTrack(selectedPlaylistTracks.random(), mode = PlaybackMode.PLAYLIST_LOOP, queue = selectedPlaylistTracks, isUserClick = true)
+                                }
+                            },
+                            onTrackClick = { track ->
+                                startTrack(track, mode = PlaybackMode.PLAYLIST_LOOP, queue = selectedPlaylistTracks, isUserClick = true)
+                            }
+                        )
+                    }
+
                     if (showFullScreenPlayer && current != null) {
                         FullScreenPlayer(
                             track = current!!,
@@ -1304,6 +1572,110 @@ private fun MusicHome(player: MediaController?, viewModel: MainViewModel) {
                             onSpeedChange = {
                                 playbackSpeed = it
                                 player?.playbackParameters = PlaybackParameters(it)
+                            },
+                            onOpenQueue = { showQueueSheet = true }
+                        )
+                    }
+
+                    if (showQueueSheet) {
+                        val activeQueue = if (viewModel.playbackMode.value == PlaybackMode.PLAYLIST_LOOP) {
+                            viewModel.playlistQueue.value
+                        } else {
+                            relatedQueue
+                        }
+                        UpNextQueueSheet(
+                            queue = activeQueue,
+                            currentTrack = current,
+                            playing = playing,
+                            playbackMode = viewModel.playbackMode.value,
+                            theme = theme,
+                            onDismiss = { showQueueSheet = false },
+                            onTrackSelect = { track -> startTrack(track, mode = viewModel.playbackMode.value, isUserClick = true) },
+                            onRemoveTrack = { track ->
+                                if (viewModel.playbackMode.value == PlaybackMode.PLAYLIST_LOOP) {
+                                    viewModel.playlistQueue.value = viewModel.playlistQueue.value - track
+                                } else {
+                                    relatedQueue.remove(track)
+                                }
+                            }
+                        )
+                    }
+
+                    if (showCreatePlaylistDialog) {
+                        AlertDialog(
+                            onDismissRequest = { showCreatePlaylistDialog = false },
+                            containerColor = theme.card,
+                            title = { Text("Create New Playlist", color = theme.textPrimary, fontWeight = FontWeight.Bold) },
+                            text = {
+                                OutlinedTextField(
+                                    value = createPlaylistInput,
+                                    onValueChange = { createPlaylistInput = it },
+                                    placeholder = { Text("e.g. Gym Motivation, Study", color = theme.secondary) },
+                                    singleLine = true,
+                                    colors = OutlinedTextFieldDefaults.colors(
+                                        focusedTextColor = theme.textPrimary, unfocusedTextColor = theme.textPrimary,
+                                        cursorColor = theme.accent, focusedBorderColor = theme.accent, unfocusedBorderColor = theme.secondary
+                                    )
+                                )
+                            },
+                            confirmButton = {
+                                Button(
+                                    onClick = {
+                                        if (createPlaylistInput.isNotBlank()) {
+                                            viewModel.createCustomPlaylist(createPlaylistInput.trim())
+                                            createPlaylistInput = ""
+                                            showCreatePlaylistDialog = false
+                                        }
+                                    },
+                                    colors = ButtonDefaults.buttonColors(containerColor = theme.accent)
+                                ) {
+                                    Text("Create")
+                                }
+                            },
+                            dismissButton = {
+                                TextButton(onClick = { showCreatePlaylistDialog = false }) {
+                                    Text("Cancel", color = theme.secondary)
+                                }
+                            }
+                        )
+                    }
+
+                    if (trackToAddToPlaylist != null) {
+                        AlertDialog(
+                            onDismissRequest = { trackToAddToPlaylist = null },
+                            containerColor = theme.card,
+                            title = { Text("Add to Playlist", color = theme.textPrimary, fontWeight = FontWeight.Bold) },
+                            text = {
+                                Column(modifier = Modifier.fillMaxWidth()) {
+                                    if (customPlaylists.isEmpty()) {
+                                        Text("No playlists found. Create one in Library first!", color = theme.secondary)
+                                    } else {
+                                        LazyColumn(modifier = Modifier.fillMaxWidth().heightIn(max = 300.dp)) {
+                                            lazyListItems(items = customPlaylists, key = { it.playlistId }) { playlist ->
+                                                Row(
+                                                    modifier = Modifier
+                                                        .fillMaxWidth()
+                                                        .clickable {
+                                                            viewModel.addTrackToCustomPlaylist(playlist.playlistId, trackToAddToPlaylist!!)
+                                                            Toast.makeText(context, "Added to ${playlist.name}", Toast.LENGTH_SHORT).show()
+                                                            trackToAddToPlaylist = null
+                                                        }
+                                                        .padding(12.dp),
+                                                    verticalAlignment = Alignment.CenterVertically
+                                                ) {
+                                                    Icon(Icons.Rounded.PlaylistAdd, contentDescription = null, tint = theme.accent)
+                                                    Spacer(Modifier.width(12.dp))
+                                                    Text(playlist.name, color = theme.textPrimary, fontWeight = FontWeight.SemiBold)
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            },
+                            confirmButton = {
+                                TextButton(onClick = { trackToAddToPlaylist = null }) {
+                                    Text("Close", color = theme.secondary)
+                                }
                             }
                         )
                     }
@@ -1378,9 +1750,14 @@ fun SongItem(
     isPlaying: Boolean,
     isFav: Boolean,
     onFavToggle: () -> Unit,
-    onClick: () -> Unit
+    onClick: () -> Unit,
+    onPlayNext: (() -> Unit)? = null,
+    onAddToPlaylist: (() -> Unit)? = null,
+    onDownload: (() -> Unit)? = null
 ) {
     val theme = LocalAppTheme.current
+    var showMenu by remember { mutableStateOf(false) }
+
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -1410,6 +1787,38 @@ fun SongItem(
                 contentDescription = null,
                 tint = if (isFav) theme.accent else theme.secondary
             )
+        }
+        Box {
+            IconButton(onClick = { showMenu = true }) {
+                Icon(Icons.Rounded.MoreVert, contentDescription = "Options", tint = theme.secondary)
+            }
+            DropdownMenu(
+                expanded = showMenu,
+                onDismissRequest = { showMenu = false },
+                modifier = Modifier.background(theme.card)
+            ) {
+                if (onPlayNext != null) {
+                    DropdownMenuItem(
+                        text = { Text("Play Next", color = theme.textPrimary) },
+                        leadingIcon = { Icon(Icons.Rounded.QueueMusic, contentDescription = null, tint = theme.accent) },
+                        onClick = { showMenu = false; onPlayNext() }
+                    )
+                }
+                if (onAddToPlaylist != null) {
+                    DropdownMenuItem(
+                        text = { Text("Add to Playlist", color = theme.textPrimary) },
+                        leadingIcon = { Icon(Icons.Rounded.PlaylistAdd, contentDescription = null, tint = theme.accent) },
+                        onClick = { showMenu = false; onAddToPlaylist() }
+                    )
+                }
+                if (onDownload != null) {
+                    DropdownMenuItem(
+                        text = { Text("Download Song", color = theme.textPrimary) },
+                        leadingIcon = { Icon(Icons.Rounded.Download, contentDescription = null, tint = theme.accent) },
+                        onClick = { showMenu = false; onDownload() }
+                    )
+                }
+            }
         }
     }
 }
@@ -1478,6 +1887,86 @@ fun MiniPlayer(
     }
 }
 
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun UpNextQueueSheet(
+    queue: List<TrackInfo>,
+    currentTrack: TrackInfo?,
+    playing: Boolean,
+    playbackMode: PlaybackMode,
+    theme: AppThemePalette,
+    onDismiss: () -> Unit,
+    onTrackSelect: (TrackInfo) -> Unit,
+    onRemoveTrack: (TrackInfo) -> Unit
+) {
+    ModalBottomSheet(
+        onDismissRequest = onDismiss,
+        containerColor = theme.card,
+        contentColor = theme.textPrimary
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(24.dp)
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Column {
+                    Text("Up Next Queue", color = theme.textPrimary, fontSize = 20.sp, fontWeight = FontWeight.Bold)
+                    Text(
+                        if (playbackMode == PlaybackMode.PLAYLIST_LOOP) "Mode: Playlist Loop" else "Mode: Smart Radio Auto-Play",
+                        color = theme.secondary,
+                        fontSize = 12.sp
+                    )
+                }
+                Text("${queue.size} Tracks", color = theme.accent, fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
+            }
+
+            Spacer(Modifier.height(16.dp))
+
+            if (queue.isEmpty()) {
+                Box(Modifier.fillMaxWidth().padding(32.dp), contentAlignment = Alignment.Center) {
+                    Text("No upcoming tracks in queue.", color = theme.secondary)
+                }
+            } else {
+                LazyColumn(
+                    modifier = Modifier.fillMaxWidth().heightIn(max = 400.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    lazyListItems(items = queue, key = { it.id }) { track ->
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .glass(alpha = 0.3f)
+                                .clickable { onTrackSelect(track) }
+                                .padding(12.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Icon(
+                                if (currentTrack?.id == track.id && playing) Icons.Rounded.GraphicEq else Icons.Rounded.MusicNote,
+                                contentDescription = null,
+                                tint = if (currentTrack?.id == track.id) theme.accent else theme.secondary,
+                                modifier = Modifier.size(24.dp)
+                            )
+                            Spacer(Modifier.width(12.dp))
+                            Column(Modifier.weight(1f)) {
+                                Text(track.title, color = if (currentTrack?.id == track.id) theme.accent else theme.textPrimary, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                Text(track.artist, color = theme.secondary, fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                            }
+                            IconButton(onClick = { onRemoveTrack(track) }) {
+                                Icon(Icons.Rounded.Close, contentDescription = "Remove", tint = theme.secondary, modifier = Modifier.size(20.dp))
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
 @Composable
 fun FullScreenPlayer(
     track: TrackInfo,
@@ -1495,9 +1984,20 @@ fun FullScreenPlayer(
     onShuffleToggle: () -> Unit,
     onRepeatToggle: () -> Unit,
     onSeek: (Float) -> Unit,
-    onSpeedChange: (Float) -> Unit
+    onSpeedChange: (Float) -> Unit,
+    onOpenQueue: () -> Unit
 ) {
     val theme = LocalAppTheme.current
+    var showLyrics by remember { mutableStateOf(false) }
+    var lyricsLines by remember { mutableStateOf<List<LrcLine>?>(null) }
+    var lyricsLoading by remember { mutableStateOf(false) }
+
+    LaunchedEffect(track.id) {
+        lyricsLoading = true
+        lyricsLines = LrcLyricsHelper.fetchLyrics(track.title, track.artist)
+        lyricsLoading = false
+    }
+
     val infiniteTransition = rememberInfiniteTransition(label = "VinylRotation")
     val rotationAngle by infiniteTransition.animateFloat(
         initialValue = 0f,
@@ -1533,12 +2033,66 @@ fun FullScreenPlayer(
                     Icon(Icons.Rounded.KeyboardArrowDown, contentDescription = "Close", tint = theme.textPrimary, modifier = Modifier.size(32.dp))
                 }
                 Text("NOW PLAYING", color = theme.secondary, fontSize = 12.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.sp)
-                Spacer(Modifier.width(48.dp))
+                Row {
+                    IconButton(onClick = { showLyrics = !showLyrics }) {
+                        Icon(Icons.Rounded.Lyrics, contentDescription = "Lyrics", tint = if (showLyrics) theme.accent else theme.textPrimary, modifier = Modifier.size(24.dp))
+                    }
+                    IconButton(onClick = onOpenQueue) {
+                        Icon(Icons.Rounded.QueueMusic, contentDescription = "Queue", tint = theme.textPrimary, modifier = Modifier.size(24.dp))
+                    }
+                }
             }
 
             Spacer(Modifier.height(16.dp))
 
-            if (isWideScreen) {
+            if (showLyrics) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .weight(1f)
+                        .glass(alpha = 0.4f)
+                        .padding(16.dp),
+                    contentAlignment = Alignment.Center
+                ) {
+                    if (lyricsLoading) {
+                        CircularProgressIndicator(color = theme.accent)
+                    } else if (lyricsLines.isNullOrEmpty()) {
+                        Text("No synced lyrics available for this track.", color = theme.secondary, fontSize = 14.sp)
+                    } else {
+                        val activeIndex = lyricsLines!!.indexOfLast { it.timeMs <= currentPositionMs }.coerceAtLeast(0)
+                        val listState = rememberLazyListState()
+
+                        LaunchedEffect(activeIndex) {
+                            if (activeIndex >= 0) {
+                                listState.animateScrollToItem(activeIndex)
+                            }
+                        }
+
+                        LazyColumn(
+                            state = listState,
+                            modifier = Modifier.fillMaxSize(),
+                            horizontalAlignment = Alignment.CenterHorizontally,
+                            verticalArrangement = Arrangement.spacedBy(16.dp)
+                        ) {
+                            val lines = lyricsLines!!
+                            lazyListItems(items = lines, key = { it.timeMs }) { line ->
+                                val isCurrent = lines.indexOf(line) == activeIndex
+                                Text(
+                                    text = line.text,
+                                    color = if (isCurrent) theme.accent else theme.textPrimary.copy(alpha = 0.5f),
+                                    fontSize = if (isCurrent) 20.sp else 16.sp,
+                                    fontWeight = if (isCurrent) FontWeight.Bold else FontWeight.Normal,
+                                    modifier = Modifier.clickable {
+                                        if (durationMs > 0) {
+                                            onSeek(line.timeMs.toFloat() / durationMs.toFloat())
+                                        }
+                                    }
+                                )
+                            }
+                        }
+                    }
+                }
+            } else if (isWideScreen) {
                 Row(
                     modifier = Modifier.fillMaxWidth().weight(1f),
                     verticalAlignment = Alignment.CenterVertically
@@ -1779,7 +2333,7 @@ fun FullScreenPlayer(
                     ) {
                         Icon(Icons.Rounded.Shuffle, contentDescription = "Shuffle", tint = if (shuffle) theme.accent else theme.secondary, modifier = Modifier.size(20.dp))
                         Spacer(Modifier.width(6.dp))
-                        Text(if (shuffle) "Shuffle On" else "Shuffle Off", color = if (shuffle) theme.accent else theme.secondary, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+                        Text(if (shuffle) "Shuffle On" else "Shuffle Off", color = if (shuffle) theme.accent else theme.secondary, fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
                     }
 
                     Box(modifier = Modifier.width(1.dp).height(20.dp).background(theme.textPrimary.copy(alpha = 0.1f)))
@@ -1806,9 +2360,118 @@ fun FullScreenPlayer(
                                 else -> "Repeat Off"
                             },
                             color = if (repeatMode != Player.REPEAT_MODE_OFF) theme.accent else theme.secondary,
-                            fontSize = 12.sp,
+                            fontSize = 11.sp,
                             fontWeight = FontWeight.SemiBold
                         )
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+fun PlaylistCard(playlist: GenrePlaylist, theme: AppThemePalette, onClick: () -> Unit) {
+    val gradientColors = when (playlist.id) {
+        "1" -> listOf(Color(0xFF4A00E0), Color(0xFF8E2DE2))
+        "2" -> listOf(Color(0xFFf12711), Color(0xFFf5af19))
+        "3" -> listOf(Color(0xFF000000), Color(0xFFe74c3c))
+        "4" -> listOf(Color(0xFF11998e), Color(0xFF38ef7d))
+        "5" -> listOf(Color(0xFFF3904F), Color(0xFF3B4371))
+        "6" -> listOf(Color(0xFF0F2027), Color(0xFF203A43), Color(0xFF2C5364))
+        else -> listOf(theme.accent, theme.secondary)
+    }
+
+    val icon = when (playlist.id) {
+        "1" -> Icons.Rounded.Nightlife
+        "2" -> Icons.Rounded.LocalFireDepartment
+        "3" -> Icons.Rounded.FitnessCenter
+        "4" -> Icons.Rounded.Album
+        "5" -> Icons.Rounded.Headphones
+        "6" -> Icons.Rounded.Code
+        else -> Icons.Rounded.QueueMusic
+    }
+
+    Box(
+        modifier = Modifier
+            .width(160.dp)
+            .height(160.dp)
+            .clip(RoundedCornerShape(16.dp))
+            .background(Brush.linearGradient(gradientColors))
+            .clickable { onClick() }
+            .padding(16.dp)
+    ) {
+        Column(Modifier.fillMaxSize(), verticalArrangement = Arrangement.SpaceBetween) {
+            Icon(icon, contentDescription = null, tint = Color.White, modifier = Modifier.size(36.dp))
+            Column {
+                Text(playlist.title, color = Color.White, fontSize = 16.sp, fontWeight = FontWeight.Bold, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                Spacer(Modifier.height(4.dp))
+                Text("20+ Tracks", color = Color.White.copy(alpha = 0.8f), fontSize = 12.sp)
+            }
+        }
+    }
+}
+
+@Composable
+fun PlaylistDetailScreen(
+    playlist: GenrePlaylist,
+    tracks: List<TrackInfo>,
+    loading: Boolean,
+    theme: AppThemePalette,
+    playing: Boolean,
+    currentTrack: TrackInfo?,
+    favoriteTracks: List<TrackInfo>,
+    onFavToggle: (TrackInfo) -> Unit,
+    onClose: () -> Unit,
+    onPlayAll: () -> Unit,
+    onShuffle: () -> Unit,
+    onTrackClick: (TrackInfo) -> Unit
+) {
+    BackHandler { onClose() }
+    Box(modifier = Modifier.fillMaxSize().background(theme.background)) {
+        Column(modifier = Modifier.fillMaxSize()) {
+            Row(modifier = Modifier.fillMaxWidth().padding(top = 48.dp, start = 16.dp, end = 16.dp, bottom = 16.dp), verticalAlignment = Alignment.CenterVertically) {
+                IconButton(onClick = onClose) {
+                    Icon(Icons.Rounded.ArrowBack, contentDescription = "Back", tint = theme.textPrimary)
+                }
+                Spacer(Modifier.width(16.dp))
+                Text(playlist.title, color = theme.textPrimary, fontSize = 22.sp, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            }
+
+            if (loading) {
+                Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                    CircularProgressIndicator(color = theme.accent)
+                }
+            } else if (tracks.isEmpty()) {
+                Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                    Text("No tracks found.", color = theme.secondary)
+                }
+            } else {
+                Row(modifier = Modifier.fillMaxWidth().padding(horizontal = 24.dp), horizontalArrangement = Arrangement.SpaceEvenly) {
+                    Button(onClick = onPlayAll, colors = ButtonDefaults.buttonColors(containerColor = theme.accent), modifier = Modifier.weight(1f)) {
+                        Icon(Icons.Rounded.PlayArrow, contentDescription = null, tint = theme.textPrimary)
+                        Spacer(Modifier.width(8.dp))
+                        Text("Play All")
+                    }
+                    Spacer(Modifier.width(16.dp))
+                    Button(onClick = onShuffle, colors = ButtonDefaults.buttonColors(containerColor = theme.cardHover), modifier = Modifier.weight(1f)) {
+                        Icon(Icons.Rounded.Shuffle, contentDescription = null, tint = theme.textPrimary)
+                        Spacer(Modifier.width(8.dp))
+                        Text("Shuffle")
+                    }
+                }
+                Spacer(Modifier.height(16.dp))
+                LazyColumn(modifier = Modifier.fillMaxSize().padding(horizontal = 16.dp)) {
+                    lazyListItems(items = tracks, key = { it.id }) { track ->
+                        SongItem(
+                            song = track,
+                            isCurrent = currentTrack?.id == track.id,
+                            isPlaying = playing,
+                            isFav = favoriteTracks.any { it.id == track.id },
+                            onFavToggle = { onFavToggle(track) },
+                            onClick = { onTrackClick(track) }
+                        )
+                        Spacer(Modifier.height(12.dp))
                     }
                 }
             }
