@@ -25,4 +25,7 @@ interface PlaylistDao {
 
     @Query("SELECT * FROM playlist_track_cross_ref WHERE playlistId = :playlistId ORDER BY addedAt ASC")
     fun getTracksForPlaylist(playlistId: Long): Flow<List<PlaylistTrackCrossRef>>
+
+    @Query("SELECT * FROM playlist_track_cross_ref WHERE playlistId = :playlistId ORDER BY addedAt ASC")
+    suspend fun getTracksForPlaylistSync(playlistId: Long): List<PlaylistTrackCrossRef>
 }

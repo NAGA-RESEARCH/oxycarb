@@ -1,6 +1,7 @@
 package com.bisariya.oxycarb
 
 import android.app.Application
+import android.content.Context
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.bisariya.oxycarb.db.AppDatabase
@@ -42,6 +43,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     val homeLoading = MutableStateFlow(false)
     val homeLoadingMore = MutableStateFlow(false)
 
+    val recentSearches = MutableStateFlow(listOf("Arijit Singh", "Lofi Beats", "Punjabi Party"))
+
     val searchResultsSongs = MutableStateFlow<List<TrackInfo>>(emptyList())
     val searchResultsPodcasts = MutableStateFlow<List<TrackInfo>>(emptyList())
 
@@ -63,6 +66,112 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     val selectedPlaylist = MutableStateFlow<GenrePlaylist?>(null)
     val selectedPlaylistTracks = MutableStateFlow<List<TrackInfo>>(emptyList())
     val playlistLoading = MutableStateFlow(false)
+
+    fun triggerAutoBackup(context: Context, favorites: List<TrackInfo>) {
+        val prefs = context.getSharedPreferences("oxycarb_settings", Context.MODE_PRIVATE)
+        val isBackupEnabled = prefs.getBoolean("backup_enabled", false)
+        if (!isBackupEnabled) return
+
+        viewModelScope.launch(Dispatchers.IO) {
+            val playlists = customPlaylists.value
+            val playlistBackups = playlists.map { p ->
+                val tracks = playlistDao.getTracksForPlaylistSync(p.playlistId).map { it.toTrackInfo() }
+                PlaylistBackupModel(name = p.name, tracks = tracks)
+            }
+            BackupVaultHelper.saveBackupToDocuments(context, favorites, playlistBackups)
+        }
+    }
+
+    fun performManualBackup(context: Context, favorites: List<TrackInfo>, onComplete: (Boolean) -> Unit) {
+        viewModelScope.launch(Dispatchers.IO) {
+            val playlists = customPlaylists.value
+            val playlistBackups = playlists.map { p ->
+                val tracks = playlistDao.getTracksForPlaylistSync(p.playlistId).map { it.toTrackInfo() }
+                PlaylistBackupModel(name = p.name, tracks = tracks)
+            }
+            val success = BackupVaultHelper.saveBackupToDocuments(context, favorites, playlistBackups)
+            viewModelScope.launch(Dispatchers.Main) {
+                onComplete(success)
+            }
+        }
+    }
+
+    fun restoreBackup(context: Context, onResult: (Boolean, Int) -> Unit) {
+        viewModelScope.launch(Dispatchers.IO) {
+            val backup = BackupVaultHelper.readBackupFromDocuments(context)
+            if (backup != null) {
+                var restoredCount = 0
+
+                if (backup.favorites.isNotEmpty()) {
+                    val currentFavs = FavManager.getFavs(context).toMutableList()
+                    val existingIds = currentFavs.map { it.id }.toSet()
+                    val newFavs = backup.favorites.filter { it.id !in existingIds }
+                    for (f in newFavs) {
+                        FavManager.toggleFav(context, f)
+                        restoredCount++
+                    }
+                }
+
+                for (pBackup in backup.playlists) {
+                    val pId = playlistDao.createPlaylist(PlaylistEntity(name = pBackup.name))
+                    for (track in pBackup.tracks) {
+                        playlistDao.addTrackToPlaylist(
+                            PlaylistTrackCrossRef(
+                                playlistId = pId,
+                                trackId = track.id,
+                                title = track.title,
+                                artist = track.artist,
+                                durationMs = track.durationMs
+                            )
+                        )
+                        restoredCount++
+                    }
+                }
+
+                viewModelScope.launch(Dispatchers.Main) {
+                    onResult(true, restoredCount)
+                }
+            } else {
+                viewModelScope.launch(Dispatchers.Main) {
+                    onResult(false, 0)
+                }
+            }
+        }
+    }
+
+    fun addRecentSearch(q: String) {
+        if (q.isBlank()) return
+        val current = recentSearches.value.toMutableList()
+        current.remove(q)
+        current.add(0, q)
+        recentSearches.value = current.take(5)
+    }
+
+    fun removeRecentSearch(q: String) {
+        val current = recentSearches.value.toMutableList()
+        current.remove(q)
+        recentSearches.value = current
+    }
+
+    fun playGenreCardRadio(playlist: GenrePlaylist, onTrackReady: (TrackInfo, List<TrackInfo>) -> Unit) {
+        viewModelScope.launch(Dispatchers.IO) {
+            try {
+                val extractor = ServiceList.YouTube.getSearchExtractor(playlist.query)
+                extractor.fetchPage()
+                val items = extractor.initialPage.items.filterIsInstance<org.schabi.newpipe.extractor.stream.StreamInfoItem>()
+                val results = items.map { TrackInfo(it.url.substringAfter("v="), it.name, it.uploaderName, it.duration * 1000L) }
+                if (results.isNotEmpty()) {
+                    val seed = results.first()
+                    val related = YoutubeExtractor.getRelatedTracks(seed.id)
+                    viewModelScope.launch(Dispatchers.Main) {
+                        onTrackReady(seed, related)
+                    }
+                }
+            } catch (e: Exception) {
+                // Ignore
+            }
+        }
+    }
 
     fun createCustomPlaylist(name: String) {
         viewModelScope.launch(Dispatchers.IO) {
@@ -214,6 +323,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             searchError.value = null
             return
         }
+
+        addRecentSearch(query)
 
         searchLoading.value = true
         searchError.value = null

@@ -25,12 +25,12 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
-import androidx.compose.foundation.lazy.items as lazyListItems
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.GridItemSpan
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
-import androidx.compose.foundation.lazy.grid.items as lazyGridItems
+import androidx.compose.foundation.lazy.grid.items as gridItems
 import androidx.compose.foundation.lazy.grid.rememberLazyGridState
+import androidx.compose.foundation.lazy.items as listItems
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -52,6 +52,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalFocusManager
@@ -156,13 +157,13 @@ fun formatTime(ms: Long): String {
     return String.format(Locale.US, "%02d:%02d", minutes, seconds)
 }
 
-fun getGreeting(): String {
+fun getGreetingInfo(): Pair<String, ImageVector> {
     val hour = Calendar.getInstance().get(Calendar.HOUR_OF_DAY)
     return when (hour) {
-        in 5..11 -> "Good Morning ☀️"
-        in 12..16 -> "Good Afternoon 🌤️"
-        in 17..21 -> "Good Evening 🌙"
-        else -> "Late Night Vibes 🌌"
+        in 5..11 -> "Good Morning" to Icons.Rounded.WbSunny
+        in 12..16 -> "Good Afternoon" to Icons.Rounded.WbTwilight
+        in 17..21 -> "Good Evening" to Icons.Rounded.NightsStay
+        else -> "Late Night Vibes" to Icons.Rounded.Bedtime
     }
 }
 
@@ -420,7 +421,6 @@ private fun MusicHome(player: MediaController?, viewModel: MainViewModel) {
     var currentTab by rememberSaveable { mutableIntStateOf(0) }
     var searchCategory by rememberSaveable { mutableIntStateOf(0) }
     var historyCategory by rememberSaveable { mutableIntStateOf(0) }
-    var selectedVibe by rememberSaveable { mutableStateOf("🔥 Trending") }
 
     val recentSongs by viewModel.recentSongs.collectAsState()
     val recentPodcasts by viewModel.recentPodcasts.collectAsState()
@@ -428,6 +428,8 @@ private fun MusicHome(player: MediaController?, viewModel: MainViewModel) {
     val homeSuggestedSongs by viewModel.homeSuggestedSongs.collectAsState()
     val homeLoading by viewModel.homeLoading.collectAsState()
     val homeLoadingMore by viewModel.homeLoadingMore.collectAsState()
+
+    val recentSearches by viewModel.recentSearches.collectAsState()
 
     val selectedPlaylist by viewModel.selectedPlaylist.collectAsState()
     val selectedPlaylistTracks by viewModel.selectedPlaylistTracks.collectAsState()
@@ -462,6 +464,7 @@ private fun MusicHome(player: MediaController?, viewModel: MainViewModel) {
     var dataSaver by remember { mutableStateOf(prefs.getBoolean("data_saver", false)) }
     var selectedAudioQuality by remember { mutableStateOf(prefs.getString("audio_quality", "Balanced (96kbps)") ?: "Balanced (96kbps)") }
     var autoPlayEnabled by remember { mutableStateOf(prefs.getBoolean("auto_play", true)) }
+    var backupEnabled by remember { mutableStateOf(prefs.getBoolean("backup_enabled", false)) }
     var selectedEqPreset by remember { mutableStateOf(prefs.getString("eq_preset", "Normal") ?: "Normal") }
 
     var sleepTimerMinutes by remember { mutableIntStateOf(0) }
@@ -488,6 +491,17 @@ private fun MusicHome(player: MediaController?, viewModel: MainViewModel) {
         }
     }
 
+    LaunchedEffect(Unit) {
+        if (favoriteTracks.isEmpty() && customPlaylists.isEmpty()) {
+            viewModel.restoreBackup(context) { success, count ->
+                if (success && count > 0) {
+                    favoriteTracks = FavManager.getFavs(context)
+                    Toast.makeText(context, "Library restored automatically from Documents/Oxycarb!", Toast.LENGTH_SHORT).show()
+                }
+            }
+        }
+    }
+
     fun togglePlayPause() {
         if (player != null) {
             if (player.isPlaying) {
@@ -501,7 +515,6 @@ private fun MusicHome(player: MediaController?, viewModel: MainViewModel) {
     }
 
     fun startTrack(track: TrackInfo, mode: PlaybackMode = PlaybackMode.RADIO_AUTOPLAY, queue: List<TrackInfo> = emptyList(), isUserClick: Boolean = true, pushToStack: Boolean = true) {
-        // Synchronous Main Thread Cleanup FIRST before launching coroutine (Zero Audio Overlap)
         player?.pause()
         player?.stop()
         player?.clearMediaItems()
@@ -699,7 +712,6 @@ private fun MusicHome(player: MediaController?, viewModel: MainViewModel) {
                 currentPositionMs = pos
                 durationMs = dur
 
-                // Fast pre-fetch next track stream URL at 50% progress for instant transition (< 400ms)
                 val progressFraction = pos.toFloat() / dur.toFloat()
                 if (progressFraction >= 0.50f) {
                     val nextTrack = if (viewModel.playbackMode.value == PlaybackMode.PLAYLIST_LOOP) {
@@ -860,61 +872,63 @@ private fun MusicHome(player: MediaController?, viewModel: MainViewModel) {
                                         Spacer(Modifier.height(16.dp))
                                     }
 
+                                    // Top Header with Time-of-Day Icon
                                     item(span = { GridItemSpan(maxLineSpan) }) {
-                                        Column(modifier = Modifier.fillMaxWidth()) {
-                                            Text(getGreeting(), color = theme.textPrimary, fontSize = 22.sp, fontWeight = FontWeight.Bold)
-                                            Spacer(Modifier.height(2.dp))
-                                            Text("Select a vibe to start listening", color = theme.secondary, fontSize = 12.sp)
-                                            Spacer(Modifier.height(12.dp))
+                                        val (greetingText, greetingIcon) = getGreetingInfo()
+                                        Row(verticalAlignment = Alignment.CenterVertically) {
+                                            Icon(greetingIcon, contentDescription = null, tint = theme.accent, modifier = Modifier.size(26.dp))
+                                            Spacer(Modifier.width(8.dp))
+                                            Text(greetingText, color = theme.textPrimary, fontSize = 22.sp, fontWeight = FontWeight.Bold)
+                                        }
+                                        Spacer(Modifier.height(12.dp))
+                                    }
 
-                                            LazyRow(
-                                                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                                                modifier = Modifier.fillMaxWidth()
-                                            ) {
-                                                val vibes = listOf(
-                                                    "🔥 Trending" to "Trending Hindi Songs",
-                                                    "🎧 Lofi Chill" to "Lofi Chill Beats Hindi",
-                                                    "❤️ Romantic" to "Bollywood Romantic Songs",
-                                                    "🕺 Party Hits" to "Punjabi Party Hits",
-                                                    "✨ 90s Melodies" to "90s Bollywood Melodies",
-                                                    "🎸 Acoustic" to "Romantic Acoustic Hindi"
-                                                )
-                                                lazyListItems(vibes) { vibePair ->
-                                                    val label = vibePair.first
-                                                    val vibeQuery = vibePair.second
-                                                    FilterChip(
-                                                        selected = selectedVibe == label,
-                                                        onClick = {
-                                                            selectedVibe = label
-                                                            viewModel.loadHomeFeedByVibe(vibeQuery)
-                                                        },
-                                                        label = { Text(label, fontSize = 12.sp, fontWeight = FontWeight.SemiBold) },
-                                                        colors = FilterChipDefaults.filterChipColors(
-                                                            selectedContainerColor = theme.accent,
-                                                            selectedLabelColor = theme.textPrimary,
-                                                            containerColor = theme.card.copy(alpha = 0.5f),
-                                                            labelColor = theme.secondary
-                                                        )
-                                                    )
-                                                }
+                                    // Quick Access 2-Column Compact Grid
+                                    item(span = { GridItemSpan(maxLineSpan) }) {
+                                        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                                            QuickAccessCard("Liked Songs", Icons.Rounded.Favorite, theme, modifier = Modifier.weight(1f)) {
+                                                currentTab = 2 // Library Tab -> Favorites
                                             }
+                                            QuickAccessCard("Downloads", Icons.Rounded.DownloadForOffline, theme, modifier = Modifier.weight(1f)) {
+                                                currentTab = 2
+                                            }
+                                        }
+                                        Spacer(Modifier.height(8.dp))
+                                        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                                            QuickAccessCard("Recent History", Icons.Rounded.History, theme, modifier = Modifier.weight(1f)) {
+                                                currentTab = 2
+                                            }
+                                            QuickAccessCard("Top Radio Mix", Icons.Rounded.GraphicEq, theme, modifier = Modifier.weight(1f)) {
+                                                viewModel.loadHomeFeed(isRefresh = true)
+                                            }
+                                        }
+                                        Spacer(Modifier.height(24.dp))
+                                    }
 
-                                            Spacer(Modifier.height(24.dp))
-                                            Text("Curated Genre Playlists", color = theme.textPrimary, fontSize = 18.sp, fontWeight = FontWeight.Bold)
-                                            Spacer(Modifier.height(12.dp))
+                                    // "Browse by Genre" Cards with Genre Radio Chain Engine
+                                    item(span = { GridItemSpan(maxLineSpan) }) {
+                                        Text("Browse by Genre", color = theme.textPrimary, fontSize = 18.sp, fontWeight = FontWeight.Bold)
+                                        Spacer(Modifier.height(12.dp))
 
-                                            LazyRow(
-                                                horizontalArrangement = Arrangement.spacedBy(12.dp),
-                                                modifier = Modifier.fillMaxWidth()
-                                            ) {
-                                                lazyListItems(viewModel.genrePlaylists) { playlist ->
-                                                    PlaylistCard(playlist, theme) {
-                                                        viewModel.loadPlaylist(playlist)
+                                        LazyRow(
+                                            horizontalArrangement = Arrangement.spacedBy(12.dp),
+                                            modifier = Modifier.fillMaxWidth()
+                                        ) {
+                                            listItems(items = viewModel.genrePlaylists, key = { it.id }) { playlist ->
+                                                PlaylistCard(playlist, theme) {
+                                                    viewModel.playGenreCardRadio(playlist) { seedTrack, relatedTracks ->
+                                                        startTrack(seedTrack, mode = PlaybackMode.RADIO_AUTOPLAY, isUserClick = true)
                                                     }
                                                 }
                                             }
                                         }
-                                        Spacer(Modifier.height(16.dp))
+                                        Spacer(Modifier.height(24.dp))
+                                    }
+
+                                    // "Recommended For You" Section Header
+                                    item(span = { GridItemSpan(maxLineSpan) }) {
+                                        Text("Recommended For You", color = theme.textPrimary, fontSize = 18.sp, fontWeight = FontWeight.Bold)
+                                        Spacer(Modifier.height(8.dp))
                                     }
 
                                     if (homeLoading && homeSuggestedSongs.isEmpty()) {
@@ -928,7 +942,7 @@ private fun MusicHome(player: MediaController?, viewModel: MainViewModel) {
                                             Text("No songs available right now. Swipe down to refresh!", color = theme.secondary, fontSize = 14.sp)
                                         }
                                     } else {
-                                        lazyGridItems(items = homeSuggestedSongs, key = { it.id }) { song ->
+                                        gridItems(items = homeSuggestedSongs, key = { it.id }) { song ->
                                             SongItem(
                                                 song = song,
                                                 isCurrent = current?.id == song.id,
@@ -1021,79 +1035,138 @@ private fun MusicHome(player: MediaController?, viewModel: MainViewModel) {
                                                         focusedBorderColor = theme.accent.copy(alpha = 0.5f), unfocusedBorderColor = theme.textPrimary.copy(alpha = 0.1f)
                                                     )
                                                 )
+                                            }
+                                        }
 
+                                        if (query.isBlank()) {
+                                            // Empty Query Discovery View (Recent Searches & Mood Exploration Grid)
+                                            item(span = { GridItemSpan(maxLineSpan) }) {
+                                                if (recentSearches.isNotEmpty()) {
+                                                    Text("Recent Searches", color = theme.textPrimary, fontSize = 16.sp, fontWeight = FontWeight.Bold)
+                                                    Spacer(Modifier.height(8.dp))
+                                                    LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                                        listItems(items = recentSearches, key = { it }) { q ->
+                                                            FilterChip(
+                                                                selected = false,
+                                                                onClick = { viewModel.search(q) },
+                                                                label = { Text(q, fontSize = 12.sp) },
+                                                                leadingIcon = { Icon(Icons.Rounded.History, contentDescription = null, modifier = Modifier.size(16.dp)) },
+                                                                trailingIcon = {
+                                                                    Icon(
+                                                                        Icons.Rounded.Close,
+                                                                        contentDescription = "Remove",
+                                                                        modifier = Modifier.size(16.dp).clickable { viewModel.removeRecentSearch(q) }
+                                                                    )
+                                                                }
+                                                            )
+                                                        }
+                                                    }
+                                                    Spacer(Modifier.height(24.dp))
+                                                }
+
+                                                Text("Explore Moods & Categories", color = theme.textPrimary, fontSize = 18.sp, fontWeight = FontWeight.Bold)
+                                                Spacer(Modifier.height(12.dp))
+                                            }
+
+                                            val categories = listOf(
+                                                "Pop Hits" to Icons.Rounded.MusicNote,
+                                                "Retro 90s" to Icons.Rounded.Album,
+                                                "Chill Lofi" to Icons.Rounded.Nightlife,
+                                                "Gym Workout" to Icons.Rounded.FitnessCenter,
+                                                "Romantic Mix" to Icons.Rounded.Favorite,
+                                                "Party Anthems" to Icons.Rounded.LocalFireDepartment
+                                            )
+
+                                            gridItems(items = categories, key = { it.first }) { (catName, catIcon) ->
+                                                Row(
+                                                    modifier = Modifier
+                                                        .fillMaxWidth()
+                                                        .glass()
+                                                        .clickable { viewModel.search(catName) }
+                                                        .padding(16.dp),
+                                                    verticalAlignment = Alignment.CenterVertically
+                                                ) {
+                                                    Icon(catIcon, contentDescription = null, tint = theme.accent, modifier = Modifier.size(24.dp))
+                                                    Spacer(Modifier.width(12.dp))
+                                                    Text(catName, color = theme.textPrimary, fontWeight = FontWeight.SemiBold)
+                                                }
+                                            }
+                                        } else {
+                                            item(span = { GridItemSpan(maxLineSpan) }) {
                                                 Row(Modifier.fillMaxWidth().padding(bottom = 12.dp)) {
                                                     FilterChip(
                                                         selected = searchCategory == 0,
                                                         onClick = { searchCategory = 0 },
                                                         label = { Text("Songs") },
+                                                        leadingIcon = { Icon(Icons.Rounded.MusicNote, contentDescription = null, modifier = Modifier.size(16.dp)) },
                                                         modifier = Modifier.padding(end = 8.dp)
                                                     )
                                                     FilterChip(
                                                         selected = searchCategory == 1,
                                                         onClick = { searchCategory = 1 },
+                                                        leadingIcon = { Icon(Icons.Rounded.Podcasts, contentDescription = null, modifier = Modifier.size(16.dp)) },
                                                         label = { Text("Podcasts") }
                                                     )
                                                 }
                                             }
-                                        }
 
-                                        if (searchLoading) {
-                                            item(span = { GridItemSpan(maxLineSpan) }) {
-                                                Box(Modifier.fillMaxWidth().padding(32.dp), contentAlignment = Alignment.Center) {
-                                                    CircularProgressIndicator(color = theme.accent)
-                                                }
-                                            }
-                                        } else if (searchError != null) {
-                                            item(span = { GridItemSpan(maxLineSpan) }) {
-                                                Column(
-                                                    modifier = Modifier.fillMaxWidth().padding(24.dp),
-                                                    horizontalAlignment = Alignment.CenterHorizontally
-                                                ) {
-                                                    Icon(Icons.Rounded.WifiOff, contentDescription = null, tint = theme.accent, modifier = Modifier.size(48.dp))
-                                                    Spacer(Modifier.height(8.dp))
-                                                    Text(searchError!!, color = theme.textPrimary, fontSize = 14.sp)
-                                                    Spacer(Modifier.height(16.dp))
-                                                    Button(
-                                                        onClick = { viewModel.retrySearch() },
-                                                        colors = ButtonDefaults.buttonColors(containerColor = theme.accent)
-                                                    ) {
-                                                        Text("Retry Search")
+                                            if (searchLoading) {
+                                                item(span = { GridItemSpan(maxLineSpan) }) {
+                                                    Box(Modifier.fillMaxWidth().padding(32.dp), contentAlignment = Alignment.Center) {
+                                                        CircularProgressIndicator(color = theme.accent)
                                                     }
                                                 }
-                                            }
-                                        } else {
-                                            val list = if (searchCategory == 0) searchResultsSongs else searchResultsPodcasts
-                                            if (list.isEmpty() && query.isNotBlank()) {
-                                                item(span = { GridItemSpan(maxLineSpan) }) { Text("No results found.", color = theme.secondary) }
-                                            } else {
-                                                lazyGridItems(items = list, key = { it.id }) { song ->
-                                                    SongItem(
-                                                        song = song,
-                                                        isCurrent = current?.id == song.id,
-                                                        isPlaying = playing,
-                                                        isFav = favoriteTracks.any { it.id == song.id },
-                                                        onFavToggle = { FavManager.toggleFav(context, song); favoriteTracks = FavManager.getFavs(context) },
-                                                        onClick = {
-                                                            keyboardController?.hide()
-                                                            focusManager.clearFocus()
-                                                            startTrack(song, mode = PlaybackMode.RADIO_AUTOPLAY, isUserClick = true)
-                                                        },
-                                                        onPlayNext = { relatedQueue.add(0, song); Toast.makeText(context, "Added to Play Next", Toast.LENGTH_SHORT).show() },
-                                                        onAddToPlaylist = { trackToAddToPlaylist = song },
-                                                        onDownload = {
-                                                            coroutineScope.launch {
-                                                                DownloadHelper.downloadTrack(context, song, selectedAudioQuality, {}, { success ->
-                                                                    if (success) {
-                                                                        downloadedTracks = DownloadHelper.getDownloadedTracks(context)
-                                                                        Toast.makeText(context, "Downloaded ${song.title}", Toast.LENGTH_SHORT).show()
-                                                                    } else {
-                                                                        Toast.makeText(context, "Download failed", Toast.LENGTH_SHORT).show()
-                                                                    }
-                                                                })
-                                                            }
+                                            } else if (searchError != null) {
+                                                item(span = { GridItemSpan(maxLineSpan) }) {
+                                                    Column(
+                                                        modifier = Modifier.fillMaxWidth().padding(24.dp),
+                                                        horizontalAlignment = Alignment.CenterHorizontally
+                                                    ) {
+                                                        Icon(Icons.Rounded.WifiOff, contentDescription = null, tint = theme.accent, modifier = Modifier.size(48.dp))
+                                                        Spacer(Modifier.height(8.dp))
+                                                        Text(searchError!!, color = theme.textPrimary, fontSize = 14.sp)
+                                                        Spacer(Modifier.height(16.dp))
+                                                        Button(
+                                                            onClick = { viewModel.retrySearch() },
+                                                            colors = ButtonDefaults.buttonColors(containerColor = theme.accent)
+                                                        ) {
+                                                            Text("Retry Search")
                                                         }
-                                                    )
+                                                    }
+                                                }
+                                            } else {
+                                                val list = if (searchCategory == 0) searchResultsSongs else searchResultsPodcasts
+                                                if (list.isEmpty() && query.isNotBlank()) {
+                                                    item(span = { GridItemSpan(maxLineSpan) }) { Text("No results found.", color = theme.secondary) }
+                                                } else {
+                                                    gridItems(items = list, key = { it.id }) { song ->
+                                                        SongItem(
+                                                            song = song,
+                                                            isCurrent = current?.id == song.id,
+                                                            isPlaying = playing,
+                                                            isFav = favoriteTracks.any { it.id == song.id },
+                                                            onFavToggle = { FavManager.toggleFav(context, song); favoriteTracks = FavManager.getFavs(context) },
+                                                            onClick = {
+                                                                keyboardController?.hide()
+                                                                focusManager.clearFocus()
+                                                                startTrack(song, mode = PlaybackMode.RADIO_AUTOPLAY, isUserClick = true)
+                                                            },
+                                                            onPlayNext = { relatedQueue.add(0, song); Toast.makeText(context, "Added to Play Next", Toast.LENGTH_SHORT).show() },
+                                                            onAddToPlaylist = { trackToAddToPlaylist = song },
+                                                            onDownload = {
+                                                                coroutineScope.launch {
+                                                                    DownloadHelper.downloadTrack(context, song, selectedAudioQuality, {}, { success ->
+                                                                        if (success) {
+                                                                            downloadedTracks = DownloadHelper.getDownloadedTracks(context)
+                                                                            Toast.makeText(context, "Downloaded ${song.title}", Toast.LENGTH_SHORT).show()
+                                                                        } else {
+                                                                            Toast.makeText(context, "Download failed", Toast.LENGTH_SHORT).show()
+                                                                        }
+                                                                    })
+                                                                }
+                                                            }
+                                                        )
+                                                    }
                                                 }
                                             }
                                         }
@@ -1118,7 +1191,7 @@ private fun MusicHome(player: MediaController?, viewModel: MainViewModel) {
                                                 item(span = { GridItemSpan(maxLineSpan) }) { Text("No recently played songs.", color = theme.secondary) }
                                             } else {
                                                 val list = recentSongs.map { it.toTrackInfo() }
-                                                lazyGridItems(items = list, key = { it.id }) { song ->
+                                                gridItems(items = list, key = { it.id }) { song ->
                                                     SongItem(
                                                         song = song,
                                                         isCurrent = current?.id == song.id,
@@ -1137,7 +1210,7 @@ private fun MusicHome(player: MediaController?, viewModel: MainViewModel) {
                                             if (favoriteTracks.isEmpty()) {
                                                 item(span = { GridItemSpan(maxLineSpan) }) { Text("No favorite songs saved yet.", color = theme.secondary) }
                                             } else {
-                                                lazyGridItems(items = favoriteTracks, key = { it.id }) { song ->
+                                                gridItems(items = favoriteTracks, key = { it.id }) { song ->
                                                     SongItem(
                                                         song = song,
                                                         isCurrent = current?.id == song.id,
@@ -1172,7 +1245,7 @@ private fun MusicHome(player: MediaController?, viewModel: MainViewModel) {
                                                     Text("No custom playlists created yet. Tap Create to add one!", color = theme.secondary)
                                                 }
                                             } else {
-                                                lazyGridItems(items = customPlaylists, key = { it.playlistId }) { playlist ->
+                                                gridItems(items = customPlaylists, key = { it.playlistId }) { playlist ->
                                                     Row(
                                                         modifier = Modifier
                                                             .fillMaxWidth()
@@ -1211,7 +1284,7 @@ private fun MusicHome(player: MediaController?, viewModel: MainViewModel) {
                                                     Text("No downloaded songs. Tap download option on any song to save offline!", color = theme.secondary)
                                                 }
                                             } else {
-                                                lazyGridItems(items = downloadedTracks, key = { it.id }) { song ->
+                                                gridItems(items = downloadedTracks, key = { it.id }) { song ->
                                                     Row(
                                                         modifier = Modifier
                                                             .fillMaxWidth()
@@ -1265,7 +1338,7 @@ private fun MusicHome(player: MediaController?, viewModel: MainViewModel) {
                                                     modifier = Modifier.fillMaxWidth(),
                                                     horizontalArrangement = Arrangement.spacedBy(8.dp)
                                                 ) {
-                                                    lazyListItems(AppThemeList) { appTheme ->
+                                                    listItems(AppThemeList) { appTheme ->
                                                         FilterChip(
                                                             selected = savedThemeName == appTheme.name,
                                                             onClick = {
@@ -1303,7 +1376,7 @@ private fun MusicHome(player: MediaController?, viewModel: MainViewModel) {
                                                     horizontalArrangement = Arrangement.spacedBy(8.dp)
                                                 ) {
                                                     val options = listOf("Data Saver (48kbps)", "Balanced (96kbps)", "High Quality (128kbps+)")
-                                                    lazyListItems(options) { quality ->
+                                                    listItems(options) { quality ->
                                                         FilterChip(
                                                             selected = selectedAudioQuality == quality,
                                                             onClick = {
@@ -1352,7 +1425,7 @@ private fun MusicHome(player: MediaController?, viewModel: MainViewModel) {
                                                     horizontalArrangement = Arrangement.spacedBy(8.dp)
                                                 ) {
                                                     val presets = listOf("Normal", "Bass Boost", "Vocal", "Rock", "Pop")
-                                                    lazyListItems(presets) { preset ->
+                                                    listItems(presets) { preset ->
                                                         FilterChip(
                                                             selected = selectedEqPreset == preset,
                                                             onClick = {
@@ -1383,7 +1456,7 @@ private fun MusicHome(player: MediaController?, viewModel: MainViewModel) {
                                                     horizontalArrangement = Arrangement.spacedBy(8.dp)
                                                 ) {
                                                     val timerOpts = listOf(0 to "Off", 15 to "15m", 30 to "30m", 60 to "60m", -1 to "Custom")
-                                                    lazyListItems(timerOpts) { (mins, label) ->
+                                                    listItems(timerOpts) { (mins, label) ->
                                                         FilterChip(
                                                             selected = (mins != -1 && sleepTimerMinutes == mins) || (mins == -1 && sleepTimerMinutes > 60),
                                                             onClick = {
@@ -1395,6 +1468,85 @@ private fun MusicHome(player: MediaController?, viewModel: MainViewModel) {
                                                             },
                                                             label = { Text(label, fontSize = 12.sp) }
                                                         )
+                                                    }
+                                                }
+                                            }
+                                        }
+
+                                        item(span = { GridItemSpan(maxLineSpan) }) {
+                                            Column {
+                                                Spacer(Modifier.height(8.dp))
+                                                Text("Backup & Persistence", color = theme.accent, fontSize = 14.sp, fontWeight = FontWeight.Bold)
+                                                Spacer(Modifier.height(8.dp))
+                                            }
+                                        }
+
+                                        item(span = { GridItemSpan(maxLineSpan) }) {
+                                            Column(Modifier.fillMaxWidth().glass().padding(16.dp)) {
+                                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                                    Icon(Icons.Rounded.CloudSync, contentDescription = null, tint = theme.accent, modifier = Modifier.size(24.dp))
+                                                    Spacer(Modifier.width(12.dp))
+                                                    Column(Modifier.weight(1f)) {
+                                                        Text("Keep Favorites & Playlists After Uninstall", color = theme.textPrimary, fontWeight = FontWeight.SemiBold)
+                                                        Text("Saves a backup to Documents/Oxycarb so your library restores automatically if you reinstall the app.", color = theme.secondary, fontSize = 11.sp)
+                                                    }
+                                                    Switch(
+                                                        checked = backupEnabled,
+                                                        onCheckedChange = { enabled ->
+                                                            backupEnabled = enabled
+                                                            prefs.edit().putBoolean("backup_enabled", enabled).apply()
+                                                            if (enabled) {
+                                                                viewModel.performManualBackup(context, favoriteTracks) { success ->
+                                                                    if (success) {
+                                                                        Toast.makeText(context, "Backup enabled & saved to Documents/Oxycarb!", Toast.LENGTH_SHORT).show()
+                                                                    }
+                                                                }
+                                                            }
+                                                        }
+                                                    )
+                                                }
+
+                                                Spacer(Modifier.height(12.dp))
+
+                                                Row(
+                                                    modifier = Modifier.fillMaxWidth(),
+                                                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                                ) {
+                                                    Button(
+                                                        onClick = {
+                                                            viewModel.performManualBackup(context, favoriteTracks) { success ->
+                                                                if (success) {
+                                                                    Toast.makeText(context, "Backup saved to Documents/Oxycarb!", Toast.LENGTH_SHORT).show()
+                                                                } else {
+                                                                    Toast.makeText(context, "Failed to create backup", Toast.LENGTH_SHORT).show()
+                                                                }
+                                                            }
+                                                        },
+                                                        colors = ButtonDefaults.buttonColors(containerColor = theme.accent),
+                                                        modifier = Modifier.weight(1f)
+                                                    ) {
+                                                        Icon(Icons.Rounded.SaveAlt, contentDescription = null, modifier = Modifier.size(18.dp))
+                                                        Spacer(Modifier.width(4.dp))
+                                                        Text("Backup Now", fontSize = 12.sp)
+                                                    }
+
+                                                    Button(
+                                                        onClick = {
+                                                            viewModel.restoreBackup(context) { success, count ->
+                                                                if (success) {
+                                                                    favoriteTracks = FavManager.getFavs(context)
+                                                                    Toast.makeText(context, "Restored $count item(s) from Documents/Oxycarb!", Toast.LENGTH_SHORT).show()
+                                                                } else {
+                                                                    Toast.makeText(context, "No backup file found in Documents/Oxycarb", Toast.LENGTH_SHORT).show()
+                                                                }
+                                                            }
+                                                        },
+                                                        colors = ButtonDefaults.buttonColors(containerColor = theme.cardHover),
+                                                        modifier = Modifier.weight(1f)
+                                                    ) {
+                                                        Icon(Icons.Rounded.RestorePage, contentDescription = null, tint = theme.accent, modifier = Modifier.size(18.dp))
+                                                        Spacer(Modifier.width(4.dp))
+                                                        Text("Restore", fontSize = 12.sp, color = theme.textPrimary)
                                                     }
                                                 }
                                             }
@@ -1555,6 +1707,7 @@ private fun MusicHome(player: MediaController?, viewModel: MainViewModel) {
                             repeatMode = repeatModeState,
                             playbackSpeed = playbackSpeed,
                             isWideScreen = isWideScreen,
+                            isDownloaded = DownloadHelper.isDownloaded(context, current!!.id),
                             onClose = { showFullScreenPlayer = false },
                             onPlayPause = { togglePlayPause() },
                             onSkipPrevious = { playPreviousTrack() },
@@ -1580,7 +1733,19 @@ private fun MusicHome(player: MediaController?, viewModel: MainViewModel) {
                                 playbackSpeed = it
                                 player?.playbackParameters = PlaybackParameters(it)
                             },
-                            onOpenQueue = { showQueueSheet = true }
+                            onOpenQueue = { showQueueSheet = true },
+                            onDownloadToggle = {
+                                coroutineScope.launch {
+                                    DownloadHelper.downloadTrack(context, current!!, selectedAudioQuality, {}, { success ->
+                                        if (success) {
+                                            downloadedTracks = DownloadHelper.getDownloadedTracks(context)
+                                            Toast.makeText(context, "Downloaded ${current!!.title}", Toast.LENGTH_SHORT).show()
+                                        } else {
+                                            Toast.makeText(context, "Download failed", Toast.LENGTH_SHORT).show()
+                                        }
+                                    })
+                                }
+                            }
                         )
                     }
 
@@ -1658,7 +1823,7 @@ private fun MusicHome(player: MediaController?, viewModel: MainViewModel) {
                                         Text("No playlists found. Create one in Library first!", color = theme.secondary)
                                     } else {
                                         LazyColumn(modifier = Modifier.fillMaxWidth().heightIn(max = 300.dp)) {
-                                            lazyListItems(items = customPlaylists, key = { it.playlistId }) { playlist ->
+                                            listItems(items = customPlaylists, key = { it.playlistId }) { playlist ->
                                                 Row(
                                                     modifier = Modifier
                                                         .fillMaxWidth()
@@ -1747,6 +1912,27 @@ private fun MusicHome(player: MediaController?, viewModel: MainViewModel) {
                 }
             }
         }
+    }
+}
+
+@Composable
+fun QuickAccessCard(
+    title: String,
+    icon: ImageVector,
+    theme: AppThemePalette,
+    modifier: Modifier = Modifier,
+    onClick: () -> Unit
+) {
+    Row(
+        modifier = modifier
+            .glass(RoundedCornerShape(12.dp), alpha = 0.4f)
+            .clickable { onClick() }
+            .padding(12.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Icon(icon, contentDescription = null, tint = theme.accent, modifier = Modifier.size(22.dp))
+        Spacer(Modifier.width(10.dp))
+        Text(title, color = theme.textPrimary, fontSize = 13.sp, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
     }
 }
 
@@ -1943,7 +2129,7 @@ fun UpNextQueueSheet(
                     modifier = Modifier.fillMaxWidth().heightIn(max = 400.dp),
                     verticalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
-                    lazyListItems(items = queue, key = { it.id }) { track ->
+                    listItems(items = queue, key = { it.id }) { track ->
                         Row(
                             modifier = Modifier
                                 .fillMaxWidth()
@@ -1984,6 +2170,7 @@ fun FullScreenPlayer(
     repeatMode: Int,
     playbackSpeed: Float,
     isWideScreen: Boolean,
+    isDownloaded: Boolean,
     onClose: () -> Unit,
     onPlayPause: () -> Unit,
     onSkipPrevious: () -> Unit,
@@ -1992,7 +2179,8 @@ fun FullScreenPlayer(
     onRepeatToggle: () -> Unit,
     onSeek: (Float) -> Unit,
     onSpeedChange: (Float) -> Unit,
-    onOpenQueue: () -> Unit
+    onOpenQueue: () -> Unit,
+    onDownloadToggle: () -> Unit
 ) {
     val theme = LocalAppTheme.current
     var showLyrics by remember { mutableStateOf(false) }
@@ -2040,7 +2228,15 @@ fun FullScreenPlayer(
                     Icon(Icons.Rounded.KeyboardArrowDown, contentDescription = "Close", tint = theme.textPrimary, modifier = Modifier.size(32.dp))
                 }
                 Text("NOW PLAYING", color = theme.secondary, fontSize = 12.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.sp)
-                Row {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    IconButton(onClick = onDownloadToggle) {
+                        Icon(
+                            if (isDownloaded) Icons.Rounded.OfflinePin else Icons.Rounded.DownloadForOffline,
+                            contentDescription = "Download",
+                            tint = if (isDownloaded) theme.accent else theme.textPrimary,
+                            modifier = Modifier.size(24.dp)
+                        )
+                    }
                     IconButton(onClick = { showLyrics = !showLyrics }) {
                         Icon(Icons.Rounded.Lyrics, contentDescription = "Lyrics", tint = if (showLyrics) theme.accent else theme.textPrimary, modifier = Modifier.size(24.dp))
                     }
@@ -2082,7 +2278,7 @@ fun FullScreenPlayer(
                             verticalArrangement = Arrangement.spacedBy(16.dp)
                         ) {
                             val lines = lyricsLines!!
-                            lazyListItems(items = lines, key = { it.timeMs }) { line ->
+                            listItems(items = lines, key = { it.timeMs }) { line ->
                                 val isCurrent = lines.indexOf(line) == activeIndex
                                 Text(
                                     text = line.text,
@@ -2469,7 +2665,7 @@ fun PlaylistDetailScreen(
                 }
                 Spacer(Modifier.height(16.dp))
                 LazyColumn(modifier = Modifier.fillMaxSize().padding(horizontal = 16.dp)) {
-                    lazyListItems(items = tracks, key = { it.id }) { track ->
+                    listItems(items = tracks, key = { it.id }) { track ->
                         SongItem(
                             song = track,
                             isCurrent = currentTrack?.id == track.id,
