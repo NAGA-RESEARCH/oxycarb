@@ -230,8 +230,7 @@ fun getGreetingInfo(): Pair<String, ImageVector> {
     return when (hour) {
         in 5..11 -> "Good Morning" to Icons.Rounded.WbSunny
         in 12..16 -> "Good Afternoon" to Icons.Rounded.WbTwilight
-        in 17..21 -> "Good Evening" to Icons.Rounded.NightsStay
-        else -> "Late Night Vibes" to Icons.Rounded.Bedtime
+        else -> "Good Evening" to Icons.Rounded.NightsStay
     }
 }
 
@@ -1147,19 +1146,7 @@ private fun MusicHome(player: MediaController?, viewModel: MainViewModel) {
                                         }
                                     }
 
-                                    item(span = { GridItemSpan(maxLineSpan) }) {
-                                        val (greetingText, greetingIcon) = getGreetingInfo()
-                                        Column {
-                                            Row(verticalAlignment = Alignment.CenterVertically) {
-                                                Icon(greetingIcon, contentDescription = null, tint = theme.accent, modifier = Modifier.size(26.dp))
-                                                Spacer(Modifier.width(8.dp))
-                                                Text(greetingText, color = theme.textPrimary, fontSize = 22.sp, fontWeight = FontWeight.Bold)
-                                            }
-                                            Spacer(Modifier.height(2.dp))
-                                            Text("Aaj ka mood kya hai?", color = theme.secondary, fontSize = 12.sp)
-                                        }
-                                        Spacer(Modifier.height(16.dp))
-                                    }
+
 
                                     if (current != null) {
                                         item(span = { GridItemSpan(maxLineSpan) }) {
@@ -1206,28 +1193,9 @@ private fun MusicHome(player: MediaController?, viewModel: MainViewModel) {
                                         }
                                     }
 
-                                    item(span = { GridItemSpan(maxLineSpan) }) {
-                                        Column(
-                                            modifier = Modifier.fillMaxWidth(),
-                                            verticalArrangement = Arrangement.spacedBy(8.dp)
-                                        ) {
-                                            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                                                QuickAccessCard("Recent History", Icons.Rounded.History, theme, modifier = Modifier.weight(1f)) {
-                                                    currentTab = 2
-                                                    historyCategory = 0
-                                                }
-                                                QuickAccessCard("Top Radio Mix", Icons.Rounded.GraphicEq, theme, modifier = Modifier.weight(1f)) {
-                                                    viewModel.loadHomeFeed(isRefresh = true)
-                                                }
-                                            }
-                                        }
-                                        Spacer(Modifier.height(20.dp))
-                                    }
+
 
                                     item(span = { GridItemSpan(maxLineSpan) }) {
-                                        Text("Browse by Genre", color = theme.textPrimary, fontSize = 18.sp, fontWeight = FontWeight.Bold)
-                                        Spacer(Modifier.height(12.dp))
-
                                         LazyRow(
                                             horizontalArrangement = Arrangement.spacedBy(12.dp),
                                             modifier = Modifier.fillMaxWidth()
