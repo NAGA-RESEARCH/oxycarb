@@ -822,6 +822,14 @@ private fun MusicHome(player: MediaController?, viewModel: MainViewModel) {
             override fun onPlayWhenReadyChanged(playWhenReady: Boolean, reason: Int) {
                 playing = playWhenReady && player?.playbackState != Player.STATE_ENDED
             }
+
+            override fun onPlayerError(error: androidx.media3.common.PlaybackException) {
+                Log.e("OxycarbPlayer", "ExoPlayer error: ${error.errorCodeName} - ${error.message}", error)
+                streamLoading = false
+                playing = false
+                playbackError = error.message ?: "Playback error"
+                Toast.makeText(context, "Playback Error: ${error.errorCodeName} (${error.message})", Toast.LENGTH_LONG).show()
+            }
         }
         player?.addListener(listener)
         onDispose { player?.removeListener(listener) }
