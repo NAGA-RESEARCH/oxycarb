@@ -24,13 +24,12 @@ class PlaybackService : MediaSessionService() {
             .setUsage(C.USAGE_MEDIA)
             .build()
 
-        // Ultra-Fast Playback Startup (<400ms startup buffer, 15s-50s continuous buffer)
         val loadControl = DefaultLoadControl.Builder()
             .setBufferDurationsMs(
-                15000,  // Min Buffer (15s)
-                50000,  // Max Buffer (50s)
-                350,    // Buffer for Playback startup (<350ms)
-                800     // Buffer after rebuffer (800ms)
+                15000,
+                50000,
+                350,
+                800
             )
             .setPrioritizeTimeOverSizeThresholds(true)
             .build()
@@ -49,6 +48,7 @@ class PlaybackService : MediaSessionService() {
             .setAudioAttributes(audioAttributes, true)
             .setHandleAudioBecomingNoisy(true)
             .setLoadControl(loadControl)
+            .setWakeMode(C.WAKE_MODE_NETWORK)
             .build()
 
         val forwardingPlayer = object : ForwardingPlayer(player) {
