@@ -145,7 +145,17 @@ val CyberpunkGoldTheme = AppThemePalette(
     textPrimary = Color(0xFFFFFDEE)
 )
 
-val AppThemeList = listOf(DeepDarkTheme, CleanLightTheme, MidnightBlueTheme, CyberpunkGoldTheme)
+val GtaViTheme = AppThemePalette(
+    name = "GTA VI",
+    background = Color(0xFF0D0618),
+    card = Color(0xFF1A0E2E),
+    cardHover = Color(0xFF2B164A),
+    accent = Color(0xFFFF2A85),
+    secondary = Color(0xFF00F0FF),
+    textPrimary = Color(0xFFFFF5FD)
+)
+
+val AppThemeList = listOf(DeepDarkTheme, CleanLightTheme, MidnightBlueTheme, CyberpunkGoldTheme, GtaViTheme)
 
 val LocalAppTheme = compositionLocalOf { DeepDarkTheme }
 
