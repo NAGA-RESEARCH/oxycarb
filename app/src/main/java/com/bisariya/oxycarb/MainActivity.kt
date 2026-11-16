@@ -1,20 +1,30 @@
 package com.bisariya.oxycarb
 
+import android.app.Activity
+import android.content.ActivityNotFoundException
 import android.content.BroadcastReceiver
 import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
 import android.content.SharedPreferences
+import android.net.ConnectivityManager
+import android.net.Network
+import android.net.NetworkCapabilities
+import android.net.NetworkRequest
 import android.os.Build
 import android.os.Bundle
+import android.speech.RecognizerIntent
 import android.util.Log
 import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
+import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.viewModels
+import kotlinx.coroutines.flow.MutableStateFlow
 import androidx.compose.animation.*
 import androidx.compose.animation.core.*
 import androidx.compose.foundation.Canvas
@@ -92,6 +102,46 @@ import java.util.Calendar
 import java.util.Locale
 import kotlin.math.cos
 import kotlin.math.sin
+
+class NetworkMonitor(context: Context) {
+    private val cm = context.getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
+    val isOnline = MutableStateFlow(checkOnline())
+
+    private fun checkOnline(): Boolean {
+        val net = cm.activeNetwork ?: return false
+        val caps = cm.getNetworkCapabilities(net) ?: return false
+        return caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
+    }
+
+    private val callback = object : ConnectivityManager.NetworkCallback() {
+        override fun onAvailable(network: Network) {
+            isOnline.value = true
+        }
+
+        override fun onLost(network: Network) {
+            isOnline.value = false
+        }
+    }
+
+    fun startMonitoring() {
+        val req = NetworkRequest.Builder()
+            .addCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
+            .build()
+        try {
+            cm.registerNetworkCallback(req, callback)
+        } catch (e: Exception) {
+            // Fallback
+        }
+    }
+
+    fun stopMonitoring() {
+        try {
+            cm.unregisterNetworkCallback(callback)
+        } catch (e: Exception) {
+            // Fallback
+        }
+    }
+}
 
 data class AppThemePalette(
     val name: String,
@@ -553,6 +603,36 @@ private fun MusicHome(player: MediaController?, viewModel: MainViewModel) {
     var favoriteTracks by remember { mutableStateOf(FavManager.getFavs(context)) }
     var downloadedTracks by remember { mutableStateOf(DownloadHelper.getDownloadedTracks(context)) }
 
+    val networkMonitor = remember { NetworkMonitor(context) }
+    DisposableEffect(Unit) {
+        networkMonitor.startMonitoring()
+        onDispose { networkMonitor.stopMonitoring() }
+    }
+    val isOnline by networkMonitor.isOnline.collectAsState()
+
+    val speechLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.StartActivityForResult()
+    ) { result ->
+        if (result.resultCode == Activity.RESULT_OK) {
+            val spokenText = result.data?.getStringArrayListExtra(RecognizerIntent.EXTRA_RESULTS)?.firstOrNull()
+            if (!spokenText.isNullOrBlank()) {
+                viewModel.search(spokenText)
+            }
+        }
+    }
+
+    fun launchSpeechToText() {
+        val intent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
+            putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
+            putExtra(RecognizerIntent.EXTRA_PROMPT, "Hum or speak a song title...")
+        }
+        try {
+            speechLauncher.launch(intent)
+        } catch (e: ActivityNotFoundException) {
+            Toast.makeText(context, "Speech recognition is not available on this device.", Toast.LENGTH_SHORT).show()
+        }
+    }
+
     var current by remember { mutableStateOf<TrackInfo?>(null) }
     var playing by remember { mutableStateOf(false) }
     var currentPositionMs by remember { mutableStateOf(0L) }
@@ -881,7 +961,12 @@ private fun MusicHome(player: MediaController?, viewModel: MainViewModel) {
     }
 
     BackHandler(enabled = showFullScreenPlayer) { showFullScreenPlayer = false }
-    BackHandler(enabled = currentTab != 0 && !showFullScreenPlayer) { currentTab = 0 }
+    BackHandler(enabled = currentTab == 1 && query.isNotBlank()) {
+        viewModel.search("")
+        keyboardController?.hide()
+        focusManager.clearFocus()
+    }
+    BackHandler(enabled = currentTab != 0 && !showFullScreenPlayer && query.isBlank()) { currentTab = 0 }
 
     CompositionLocalProvider(LocalAppTheme provides currentTheme) {
         val theme = LocalAppTheme.current
@@ -1014,6 +1099,52 @@ private fun MusicHome(player: MediaController?, viewModel: MainViewModel) {
                                             }
                                         }
                                         Spacer(Modifier.height(16.dp))
+                                    }
+
+                                    if (!isOnline) {
+                                        item(span = { GridItemSpan(maxLineSpan) }) {
+                                            Surface(
+                                                color = theme.accent.copy(alpha = 0.15f),
+                                                shape = RoundedCornerShape(14.dp),
+                                                modifier = Modifier.fillMaxWidth()
+                                            ) {
+                                                Row(
+                                                    modifier = Modifier.padding(14.dp),
+                                                    verticalAlignment = Alignment.CenterVertically
+                                                ) {
+                                                    Icon(Icons.Rounded.WifiOff, contentDescription = null, tint = theme.accent, modifier = Modifier.size(24.dp))
+                                                    Spacer(Modifier.width(12.dp))
+                                                    Column(Modifier.weight(1f)) {
+                                                        Text("Offline Mode Active", color = theme.textPrimary, fontWeight = FontWeight.Bold, fontSize = 14.sp)
+                                                        Text("Playing from your downloaded offline tracks", color = theme.secondary, fontSize = 11.sp)
+                                                    }
+                                                }
+                                            }
+                                            Spacer(Modifier.height(14.dp))
+                                        }
+
+                                        if (downloadedTracks.isNotEmpty()) {
+                                            item(span = { GridItemSpan(maxLineSpan) }) {
+                                                Text("Your Downloaded Songs", color = theme.textPrimary, fontSize = 18.sp, fontWeight = FontWeight.Bold)
+                                                Spacer(Modifier.height(8.dp))
+                                            }
+
+                                            gridItems(items = downloadedTracks, key = { "offline_${it.id}" }) { song ->
+                                                SongItem(
+                                                    song = song,
+                                                    isCurrent = current?.id == song.id,
+                                                    isPlaying = playing,
+                                                    isFav = favoriteTracks.any { it.id == song.id },
+                                                    downloadStatus = DownloadStatus.Downloaded,
+                                                    onFavToggle = { FavManager.toggleFav(context, song); favoriteTracks = FavManager.getFavs(context) },
+                                                    onClick = { startTrack(song, mode = PlaybackMode.RADIO_AUTOPLAY, isUserClick = true) }
+                                                )
+                                            }
+
+                                            item(span = { GridItemSpan(maxLineSpan) }) {
+                                                Spacer(Modifier.height(16.dp))
+                                            }
+                                        }
                                     }
 
                                     item(span = { GridItemSpan(maxLineSpan) }) {
@@ -1241,9 +1372,7 @@ private fun MusicHome(player: MediaController?, viewModel: MainViewModel) {
                                                         modifier = Modifier
                                                             .fillMaxWidth()
                                                             .glass(RoundedCornerShape(16.dp), alpha = 0.4f)
-                                                            .clickable {
-                                                                Toast.makeText(context, "Hum to Search: Sing or hum a melody into search!", Toast.LENGTH_SHORT).show()
-                                                            },
+                                                            .clickable { launchSpeechToText() },
                                                         colors = CardDefaults.cardColors(containerColor = Color.Transparent)
                                                     ) {
                                                         Row(
@@ -1408,12 +1537,50 @@ private fun MusicHome(player: MediaController?, viewModel: MainViewModel) {
 
                                     2 -> { // LIBRARY TAB
                                         item(span = { GridItemSpan(maxLineSpan) }) {
-                                            LazyRow(Modifier.fillMaxWidth().padding(bottom = 12.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                                                item { FilterChip(selected = historyCategory == 0, onClick = { historyCategory = 0 }, label = { Text("History (24h)") }) }
-                                                item { FilterChip(selected = historyCategory == 1, onClick = { historyCategory = 1 }, label = { Text("Favorites (${favoriteTracks.size})") }) }
-                                                item { FilterChip(selected = historyCategory == 2, onClick = { historyCategory = 2 }, label = { Text("Playlists (${customPlaylists.size})") }) }
-                                                item { FilterChip(selected = historyCategory == 3, onClick = { historyCategory = 3 }, label = { Text("Downloads (${downloadedTracks.size})") }) }
+                                            Column(modifier = Modifier.fillMaxWidth()) {
+                                                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                                                    LibraryCategoryCard(
+                                                        title = "History",
+                                                        subtitle = "${recentSongs.size} tracks",
+                                                        icon = Icons.Rounded.History,
+                                                        isSelected = historyCategory == 0,
+                                                        theme = theme,
+                                                        modifier = Modifier.weight(1f)
+                                                    ) { historyCategory = 0 }
+
+                                                    LibraryCategoryCard(
+                                                        title = "Favorites",
+                                                        subtitle = "${favoriteTracks.size} tracks",
+                                                        icon = Icons.Rounded.Favorite,
+                                                        isSelected = historyCategory == 1,
+                                                        theme = theme,
+                                                        modifier = Modifier.weight(1f)
+                                                    ) { historyCategory = 1 }
+                                                }
+
+                                                Spacer(Modifier.height(10.dp))
+
+                                                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                                                    LibraryCategoryCard(
+                                                        title = "Playlists",
+                                                        subtitle = "${customPlaylists.size} playlists",
+                                                        icon = Icons.Rounded.PlaylistPlay,
+                                                        isSelected = historyCategory == 2,
+                                                        theme = theme,
+                                                        modifier = Modifier.weight(1f)
+                                                    ) { historyCategory = 2 }
+
+                                                    LibraryCategoryCard(
+                                                        title = "Downloads",
+                                                        subtitle = "${downloadedTracks.size} tracks",
+                                                        icon = Icons.Rounded.DownloadForOffline,
+                                                        isSelected = historyCategory == 3,
+                                                        theme = theme,
+                                                        modifier = Modifier.weight(1f)
+                                                    ) { historyCategory = 3 }
+                                                }
                                             }
+                                            Spacer(Modifier.height(16.dp))
                                         }
 
                                         if (historyCategory == 0) {
@@ -2292,6 +2459,45 @@ private fun MusicHome(player: MediaController?, viewModel: MainViewModel) {
 }
 
 @Composable
+fun LibraryCategoryCard(
+    title: String,
+    subtitle: String,
+    icon: ImageVector,
+    isSelected: Boolean,
+    theme: AppThemePalette,
+    modifier: Modifier = Modifier,
+    onClick: () -> Unit
+) {
+    val borderColor = if (isSelected) theme.accent else theme.cardHover
+    val alpha = if (isSelected) 0.8f else 0.3f
+
+    Row(
+        modifier = modifier
+            .clip(RoundedCornerShape(16.dp))
+            .background(theme.card.copy(alpha = alpha))
+            .border(1.5.dp, borderColor, RoundedCornerShape(16.dp))
+            .clickable { onClick() }
+            .padding(14.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Box(
+            modifier = Modifier
+                .size(42.dp)
+                .clip(RoundedCornerShape(12.dp))
+                .background(if (isSelected) theme.accent.copy(alpha = 0.2f) else theme.cardHover),
+            contentAlignment = Alignment.Center
+        ) {
+            Icon(icon, contentDescription = null, tint = if (isSelected) theme.accent else theme.secondary, modifier = Modifier.size(22.dp))
+        }
+        Spacer(Modifier.width(12.dp))
+        Column {
+            Text(title, color = if (isSelected) theme.accent else theme.textPrimary, fontWeight = FontWeight.Bold, fontSize = 14.sp)
+            Text(subtitle, color = theme.secondary, fontSize = 11.sp)
+        }
+    }
+}
+
+@Composable
 fun QuickAccessCard(
     title: String,
     icon: ImageVector,
@@ -2923,7 +3129,7 @@ fun FullScreenPlayer(
 fun PlaylistCard(playlist: GenrePlaylist, theme: AppThemePalette, onClick: () -> Unit) {
     val gradientColors = when (playlist.id) {
         "1" -> listOf(Color(0xFF4A00E0), Color(0xFF8E2DE2))
-        "2" -> listOf(Color(0xFFf12711), Color(0xFFf5af19))
+        "2" -> listOf(Color(0xFFFF2A85), Color(0xFFFF9E00))
         "3" -> listOf(Color(0xFF000000), Color(0xFFe74c3c))
         "4" -> listOf(Color(0xFF11998e), Color(0xFF38ef7d))
         "5" -> listOf(Color(0xFFF3904F), Color(0xFF3B4371))
@@ -2944,18 +3150,43 @@ fun PlaylistCard(playlist: GenrePlaylist, theme: AppThemePalette, onClick: () ->
     Box(
         modifier = Modifier
             .width(160.dp)
-            .height(160.dp)
-            .clip(RoundedCornerShape(16.dp))
-            .background(Brush.linearGradient(gradientColors))
+            .height(175.dp)
+            .clip(RoundedCornerShape(18.dp))
+            .background(Brush.verticalGradient(gradientColors))
             .clickable { onClick() }
-            .padding(16.dp)
+            .padding(14.dp)
     ) {
-        Column(Modifier.fillMaxSize(), verticalArrangement = Arrangement.SpaceBetween) {
-            Icon(icon, contentDescription = null, tint = Color.White, modifier = Modifier.size(36.dp))
+        Column(
+            modifier = Modifier.fillMaxSize(),
+            verticalArrangement = Arrangement.SpaceBetween
+        ) {
+            Box(
+                modifier = Modifier
+                    .size(42.dp)
+                    .clip(CircleShape)
+                    .background(Color.White.copy(alpha = 0.2f)),
+                contentAlignment = Alignment.Center
+            ) {
+                Icon(icon, contentDescription = null, tint = Color.White, modifier = Modifier.size(24.dp))
+            }
+
             Column {
-                Text(playlist.title, color = Color.White, fontSize = 16.sp, fontWeight = FontWeight.Bold, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                Text(
+                    text = playlist.title,
+                    color = Color.White,
+                    fontSize = 13.sp,
+                    lineHeight = 17.sp,
+                    fontWeight = FontWeight.Bold,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis
+                )
                 Spacer(Modifier.height(4.dp))
-                Text("20+ Tracks", color = Color.White.copy(alpha = 0.8f), fontSize = 12.sp)
+                Text(
+                    text = "20+ Tracks",
+                    color = Color.White.copy(alpha = 0.8f),
+                    fontSize = 11.sp,
+                    fontWeight = FontWeight.SemiBold
+                )
             }
         }
     }
