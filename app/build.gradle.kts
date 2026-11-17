@@ -26,6 +26,16 @@ android {
             isMinifyEnabled = false
         }
     }
+
+    androidComponents.onVariants { variant ->
+        variant.outputs.forEach { output ->
+            val fileName = output.outputFileName.get()
+            if (fileName.endsWith(".apk")) {
+                output.outputFileName.set("Oxycarb-v1.2.0-${variant.name}.apk")
+            }
+        }
+    }
+
     compileOptions {
         isCoreLibraryDesugaringEnabled = true
         sourceCompatibility = JavaVersion.VERSION_11
