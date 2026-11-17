@@ -5,8 +5,8 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/NAGA-RESEARCH/oxycarb/releases/tag/v1.1.9">
-    <img src="https://img.shields.io/badge/Release-v1.1.9-E83D7A?style=for-the-badge&logo=android" alt="Version 1.1.9" />
+  <a href="https://github.com/NAGA-RESEARCH/oxycarb/releases/tag/v1.2.0">
+    <img src="https://img.shields.io/badge/Release-v1.2.0-E83D7A?style=for-the-badge&logo=android" alt="Version 1.2.0" />
   </a>
   <a href="https://kotlinlang.org/">
     <img src="https://img.shields.io/badge/Kotlin-2.2.10-purple?style=for-the-badge&logo=kotlin" alt="Kotlin" />
@@ -23,24 +23,27 @@
 
 ## 🚀 Download Latest APK
 
-📥 **[Download Oxycarb v1.1.9 APK](https://github.com/NAGA-RESEARCH/oxycarb/releases/download/v1.1.9/oxycarb-v1.1.9.apk)**
+📥 **[Download Oxycarb v1.2.0 APK](https://github.com/NAGA-RESEARCH/oxycarb/releases/download/v1.2.0/Oxycarb-v1.2.0-debug.apk)**
 
 ---
 
 ## ✨ Features
 
-- 🎧 **Smart Auto-Play Radio Engine**: Continuously queues and auto-plays related songs when current track ends.
-- 🔄 **Infinite Songs Feed & Pull-to-Refresh**: Unlimited scrollable home feed with YouTube-style pull-to-refresh.
-- 🗄️ **24-Hour Play History & Saved Favorites**: Powered by Room Database for fast offline play history and one-tap saved songs.
-- 🎨 **Dynamic App Themes System**: Instant switching between 4 themes:
+- 🎧 **Smart Auto-Play Radio Engine & Genre Radio Chain**: Continuously queues and auto-plays related songs or genre tracks.
+- 🎤 **Real-Time Synced Lyrics (LRCLIB API)**: Auto-scrolling, beat-synced LRC lyrics with tap-to-seek timestamp controls.
+- ⬇️ **Offline Downloads & Priority Mode**: Download audio tracks (`.m4a`) for instant 0ms offline playback with live progress rings.
+- 🛡️ **Uninstall-Safe Data Vault**: Opt-in Scoped Storage MediaStore backup in `Documents/Oxycarb` ensuring favorites & custom playlists survive app uninstalls and reinstalls.
+- 📉 **YouTube-Style Swipe-Down Player Collapse**: Swipe down from anywhere in the top 70% of the player to smoothly collapse into the Mini-Player (with bottom bar auto-hiding).
+- 📶 **Network Monitor & Offline Priority**: Real-time connectivity monitoring with automatic offline mode prioritization.
+- 🔍 **Voice Search & Hum to Search**: Built-in speech recognition for voice and melody searches.
+- 🗄️ **Visual Library 2x2 Vector Cards Grid**: Sleek interactive cards for History, Favorites, Playlists, and Downloads with live item counts.
+- 🎨 **Dynamic App Themes System (5 Themes)**: Instant switching between:
   - 🌙 **Deep Dark**
   - ☀️ **Clean Light**
   - 🌌 **Midnight Blue**
   - ⚡ **Cyberpunk Gold**
-- 🎚️ **Audio Equalizer Presets**: Choose between Normal, Bass Boost, Vocal, Rock, and Pop.
-- ⏱️ **Interactive Graphical Sleep Timer**: Slider control from 60 to 120 minutes with automatic playback pause.
-- 🎤 **High-Density Audio Spectrum Visualizer**: 44-bar beat-synced smooth visualizer in Full-Screen Player.
-- ⏩ **Full Playback Controls**: Interactive Seek Bar, Skip Next, Skip Previous Stack, Shuffle, and Repeat mode.
+  - 🌴 **GTA VI (Vice Sunset)**
+- 🎚️ **Audio Equalizer Presets & Sleep Timer**: Choose equalizer presets and graphical sleep timer up to 120 minutes.
 - ⚡ **120Hz Ultra-Smooth UI**: Zero frame-drop list rendering with Compose keys and OkHttp HTTP/2 connection pooling.
 
 ---
